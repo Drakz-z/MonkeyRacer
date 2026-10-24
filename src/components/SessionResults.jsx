@@ -2,6 +2,7 @@ import React, { useEffect } from 'react';
 import confetti from 'canvas-confetti';
 import { Trophy, RotateCcw, Play, Target, Gauge, Zap } from 'lucide-react';
 import LiveLeaderboard from './LiveLeaderboard';
+import NameEditor from './NameEditor';
 import { rankParticipants } from '../utils/room';
 
 function PodiumStep({ racer, place }) {
@@ -44,7 +45,7 @@ function AwardCard({ icon, label, racer, value }) {
   );
 }
 
-export default function SessionResults({ room, onRaceAgain, onBackToLobby, onLeave }) {
+export default function SessionResults({ room, onRaceAgain, onBackToLobby, onLeave, onRename }) {
   const { participants, selfId, isHost, config } = room;
   const ranked = rankParticipants(participants, 'bestWpm').filter((p) => p.testsCompleted > 0);
   const [first, second, third] = ranked;
@@ -115,6 +116,12 @@ export default function SessionResults({ room, onRaceAgain, onBackToLobby, onLea
             <AwardCard icon={<Gauge size={14} />} label="Most consistent" racer={topBy('avgWpm')} value={(r) => `${r.avgWpm} wpm avg`} />
             <AwardCard icon={<Target size={14} />} label="Most accurate" racer={topBy('avgAcc')} value={(r) => `${r.avgAcc}% acc`} />
             <AwardCard icon={<Play size={14} />} label="Most tests" racer={topBy('testsCompleted')} value={(r) => `${r.testsCompleted} tests`} />
+          </div>
+        )}
+
+        {self && (
+          <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '1.25rem' }}>
+            <NameEditor name={self.username} onRename={onRename} />
           </div>
         )}
 

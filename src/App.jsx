@@ -48,7 +48,10 @@ export default function App() {
   const [username, setUsername] = useState(
     () => initialSettings.username || `Racer_${Math.floor(100 + Math.random() * 900)}`
   );
-  const [joinRoomCode, setJoinRoomCode] = useState(() => initialRoomParam.current || '');
+  // Code from a shared link / QR (?room=RACE-ABCD): prefilled so the visitor can pick a name first
+  const inviteCode = normalizeRoomCode(initialRoomParam.current);
+  const [joinRoomCode, setJoinRoomCode] = useState(inviteCode);
+  const nameInputRef = useRef(null);
   const [busy, setBusy] = useState(null); // null | 'creating' | 'joining'
   const [joinError, setJoinError] = useState(null);
   const [toastMessage, setToastMessage] = useState(null);
@@ -151,10 +154,10 @@ export default function App() {
     joinRoom(joinRoomCode, rememberUsername());
   };
 
-  // Auto-join from a shared link / QR code (?room=RACE-ABCD), once on load
   useEffect(() => {
-    if (initialRoomParam.current) {
-      joinRoom(initialRoomParam.current, (initialSettings.username || username).trim());
+    if (inviteCode) {
+      nameInputRef.current?.focus();
+      nameInputRef.current?.select();
     }
     const onUnload = () => roomRef.current?.destroy();
     window.addEventListener('beforeunload', onUnload);
@@ -189,6 +192,12 @@ export default function App() {
 
   const sendLive = useCallback((data) => roomRef.current?.sendLive(data), []);
   const submitResult = useCallback((data) => roomRef.current?.submitResult(data), []);
+
+  const handleRename = (name) => {
+    roomRef.current?.rename(name);
+    setUsername(name);
+    saveSettings({ username: name });
+  };
 
   const handleAddBots = (count) => {
     const added = roomRef.current?.addBots(count) || 0;
@@ -241,14 +250,37 @@ export default function App() {
               </p>
             </div>
 
+            {inviteCode && joinRoomCode === inviteCode && (
+              <div style={{
+                background: 'rgba(226, 183, 20, 0.12)',
+                border: '1px solid var(--main-color)',
+                borderRadius: '12px',
+                padding: '0.85rem 1rem',
+                marginBottom: '1.5rem',
+                textAlign: 'center',
+                color: 'var(--text-color)',
+                fontSize: '0.92rem',
+              }}>
+                You've been invited to room{' '}
+                <b style={{ color: 'var(--main-color)', fontFamily: 'var(--font-mono)' }}>{inviteCode}</b>
+                <div style={{ color: 'var(--sub-color)', fontSize: '0.82rem', marginTop: '0.25rem' }}>
+                  Choose your nickname, then press Join.
+                </div>
+              </div>
+            )}
+
             <div style={{ marginBottom: '1.75rem' }}>
               <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 600, color: 'var(--sub-color)', marginBottom: '0.5rem', textTransform: 'uppercase' }}>
                 Your Racer Nickname
               </label>
               <input
+                ref={nameInputRef}
                 type="text"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && joinRoomCode.trim()) handleJoinRoom(e);
+                }}
                 onBlur={rememberUsername}
                 placeholder="Enter racer name..."
                 maxLength={18}
@@ -342,6 +374,7 @@ export default function App() {
           onAddBots={handleAddBots}
           onClearBots={() => roomRef.current?.clearBots()}
           onOpenQr={() => setIsQrOpen(true)}
+          onRename={handleRename}
         />
       );
     }
@@ -353,6 +386,7 @@ export default function App() {
           onRaceAgain={() => roomRef.current?.startSession()}
           onBackToLobby={() => roomRef.current?.restartRoom()}
           onLeave={leaveRoom}
+          onRename={handleRename}
         />
       );
     }

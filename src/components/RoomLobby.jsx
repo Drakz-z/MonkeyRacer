@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { getRoomShareUrl, SESSION_MINUTE_OPTIONS, TEST_SECOND_OPTIONS } from '../utils/room';
 import { copyText, useQrCode, LocalhostWarning } from './QrCodeModal';
+import NameEditor from './NameEditor';
 
 function OptionButton({ active, disabled, onClick, children }) {
   return (
@@ -55,6 +56,7 @@ export default function RoomLobby({
   onAddBots,
   onClearBots,
   onOpenQr,
+  onRename,
 }) {
   const [copied, setCopied] = useState(false);
   const joinUrl = getRoomShareUrl(roomId);
@@ -68,6 +70,7 @@ export default function RoomLobby({
   };
 
   const currentCount = participants.length;
+  const self = participants.find((p) => p.id === selfId);
   const maxTests = Math.floor((config.sessionMinutes * 60) / config.testSeconds);
 
   return (
@@ -136,6 +139,7 @@ export default function RoomLobby({
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
+          {self && <NameEditor name={self.username} onRename={onRename} />}
           <div style={{
             background: 'rgba(255,255,255,0.05)',
             border: '1px solid var(--card-border)',

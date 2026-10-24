@@ -236,6 +236,9 @@ export class RoomHost {
       case 'RESULT':
         this.applyResult(id, msg);
         break;
+      case 'RENAME':
+        this.renameParticipant(id, msg.username);
+        break;
       default:
         break;
     }
@@ -257,17 +260,35 @@ export class RoomHost {
     this.broadcast(true);
   }
 
+  // Make a name unique within the room (ignoring the racer's own current name)
+  uniqueName(username, excludeId = null) {
+    const name = cleanUsername(username);
+    const taken = new Set(
+      Array.from(this.room.participants.values())
+        .filter((p) => p.id !== excludeId)
+        .map((p) => p.username)
+    );
+    if (!taken.has(name)) return name;
+    let n = 2;
+    while (taken.has(`${name.slice(0, 15)}_${n}`)) n += 1;
+    return `${name.slice(0, 15)}_${n}`;
+  }
+
+  renameParticipant(id, username) {
+    const p = this.room.participants.get(id);
+    if (!p || p.isBot || !(username || '').trim()) return;
+    const next = this.uniqueName(username, id);
+    if (next === p.username) return;
+    const old = p.username;
+    p.username = next;
+    this.emitEvent(`${old} is now ${next}`);
+    this.broadcast(true);
+  }
+
   addParticipant(id, { username, device, isHost = false, isBot = false, targetWpm = null }) {
-    let name = cleanUsername(username);
-    const taken = new Set(Array.from(this.room.participants.values()).map((p) => p.username));
-    if (taken.has(name)) {
-      let n = 2;
-      while (taken.has(`${name.slice(0, 15)}_${n}`)) n += 1;
-      name = `${name.slice(0, 15)}_${n}`;
-    }
     const participant = {
       id,
-      username: name,
+      username: this.uniqueName(username),
       color: AVATAR_COLORS[this.room.participants.size % AVATAR_COLORS.length],
       isHost,
       isBot,
@@ -398,6 +419,10 @@ export class RoomHost {
 
   submitResult(data) {
     this.applyResult(this.selfId, data);
+  }
+
+  rename(username) {
+    this.renameParticipant(this.selfId, username);
   }
 
   /* ---------- loop ---------- */
@@ -646,6 +671,10 @@ export class RoomClient {
 
   submitResult(data) {
     this.send({ type: 'RESULT', ...data });
+  }
+
+  rename(username) {
+    this.send({ type: 'RENAME', username });
   }
 
   // Host-only controls are no-ops for guests
