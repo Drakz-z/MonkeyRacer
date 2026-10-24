@@ -63,7 +63,7 @@ export default function RaceSession({
   const handleFinish = useCallback((stats) => {
     const result = { wpm: stats.wpm, rawWpm: stats.rawWpm, accuracy: stats.accuracy, errors: stats.errors };
     onResult(result);
-    setMyTests((prev) => [...prev, result]);
+    setMyTests((prev) => [...prev, { ...result, consistency: stats.consistency }]);
     setPhase('cooldown');
     clearTimeout(cooldownTimerRef.current);
     cooldownTimerRef.current = setTimeout(nextTest, NEXT_TEST_DELAY_MS);
@@ -163,7 +163,7 @@ export default function RaceSession({
         }}>
           <CheckCircle2 size={16} />
           <span>
-            Test #{myTests.length}: {lastTest.wpm} wpm · {lastTest.accuracy}% acc
+            Test #{myTests.length}: {lastTest.wpm} wpm · {lastTest.accuracy}% acc · {lastTest.rawWpm} raw · {lastTest.consistency}% consistency
             {lastTest.wpm === myBest && myTests.length > 1 ? ' — new best!' : ''}
             {phase === 'cooldown' ? ' · next test starting…' : ''}
           </span>

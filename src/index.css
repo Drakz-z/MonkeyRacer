@@ -272,13 +272,15 @@ body {
 
 /* Word Box */
 .words-wrapper {
+  --line-height: 2.4rem;
   width: 100%;
   max-width: 1050px;
-  min-height: 140px;
-  max-height: 150px;
+  /* Exactly three lines of words, like Monkeytype */
+  height: calc(3 * var(--line-height) + 1rem);
+  box-sizing: border-box;
   position: relative;
   overflow: hidden;
-  line-height: 2.2rem;
+  line-height: var(--line-height);
   font-family: var(--font-mono);
   font-size: 1.55rem;
   letter-spacing: 0.5px;
@@ -289,11 +291,28 @@ body {
   transition: opacity 0.2s ease;
 }
 
+.words-wrapper.blurred .words-container {
+  filter: blur(4px);
+  opacity: 0.6;
+}
+
+.focus-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-ui);
+  font-size: 1rem;
+  color: var(--text-color);
+  cursor: pointer;
+  z-index: 20;
+}
+
 @media (max-width: 768px) {
   .words-wrapper {
+    --line-height: 2.1rem;
     font-size: 1.2rem;
-    line-height: 2rem;
-    min-height: 120px;
   }
   .live-metrics {
     font-size: 1.35rem;
@@ -305,26 +324,29 @@ body {
   position: relative;
   display: flex;
   flex-wrap: wrap;
-  gap: 0.7rem;
-  transition: transform 0.25s cubic-bezier(0.2, 0, 0, 1);
+  column-gap: 0.6em;
+  row-gap: 0;
+  transition: transform 0.15s ease-out, filter 0.2s ease, opacity 0.2s ease;
   will-change: transform;
 }
 
 .word {
   display: inline-flex;
   position: relative;
-  margin-bottom: 0.2rem;
-  border-bottom: 2px solid transparent;
+  height: var(--line-height);
 }
 
+/* Underline drawn inside the line box so it never shifts layout */
 .word.error-word {
-  border-bottom-color: var(--error-color);
+  background-image: linear-gradient(var(--error-color), var(--error-color));
+  background-repeat: no-repeat;
+  background-size: 100% 2px;
+  background-position: 0 85%;
 }
 
 .char {
   color: var(--sub-color);
   position: relative;
-  transition: color 0.05s ease;
 }
 
 .char.correct {
@@ -343,13 +365,17 @@ body {
 /* Smooth Caret */
 .smooth-caret {
   position: absolute;
+  left: 0;
+  top: 0;
   width: 2.5px;
+  margin-left: -1px;
   background-color: var(--caret-color);
   border-radius: 2px;
-  transition: left 0.08s linear, top 0.1s ease;
+  /* GPU-composited glide between letters, like Monkeytype's smooth caret */
+  transition: transform 0.1s ease-out;
+  will-change: transform;
   pointer-events: none;
   z-index: 10;
-  box-shadow: 0 0 8px var(--caret-color);
 }
 
 .smooth-caret.blink {
@@ -967,4 +993,85 @@ body {
 
 @keyframes spinIcon {
   to { transform: rotate(360deg); }
+}
+
+/* Monkeytype-style result screen */
+.result-main {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2rem;
+  align-items: stretch;
+  margin-bottom: 1.75rem;
+}
+
+.result-headline {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 1rem;
+}
+
+.result-chart {
+  position: relative;
+  height: 230px;
+  min-width: 0;
+}
+
+.result-row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 1.25rem 2rem;
+  margin-bottom: 2rem;
+}
+
+.result-stat-label {
+  font-size: 0.85rem;
+  color: var(--sub-color);
+  text-transform: lowercase;
+  font-weight: 600;
+}
+
+.result-stat-big {
+  font-family: var(--font-mono);
+  font-size: 4rem;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--main-color);
+}
+
+.result-stat-value {
+  font-family: var(--font-mono);
+  font-size: 1.9rem;
+  font-weight: 600;
+  color: var(--main-color);
+  margin-top: 0.15rem;
+}
+
+.result-stat {
+  cursor: default;
+}
+
+.kbd-hint {
+  background: var(--bg-color);
+  padding: 2px 7px;
+  border-radius: 4px;
+  border: 1px solid var(--card-border);
+  color: var(--text-color);
+}
+
+@media (max-width: 700px) {
+  .result-main {
+    grid-template-columns: 1fr;
+  }
+  .result-headline {
+    flex-direction: row;
+    justify-content: space-around;
+  }
+  .result-stat-big {
+    font-size: 3rem;
+  }
+  .result-stat-value {
+    font-size: 1.4rem;
+  }
 }

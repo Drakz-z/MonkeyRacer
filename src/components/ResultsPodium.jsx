@@ -1,229 +1,191 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useMemo } from 'react';
 import confetti from 'canvas-confetti';
-import { Trophy, RotateCcw, Share2, Medal, CheckCircle2, ArrowRight } from 'lucide-react';
+import { RotateCcw } from 'lucide-react';
 import {
   Chart as ChartJS,
   CategoryScale,
   LinearScale,
   PointElement,
   LineElement,
-  Title,
   Tooltip,
   Legend,
   Filler,
 } from 'chart.js';
-import { Line } from 'react-chartjs-2';
+import { Chart } from 'react-chartjs-2';
 
-ChartJS.register(
-  CategoryScale,
-  LinearScale,
-  PointElement,
-  LineElement,
-  Title,
-  Tooltip,
-  Legend,
-  Filler
-);
+ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Legend, Filler);
 
-export default function ResultsPodium({
-  stats,
-  isRace = false,
-  participants = [],
-  selfId,
-  isHost,
-  onPlayAgain,
-}) {
-  // Fire confetti celebration
+function cssVar(name, fallback) {
+  const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  return v || fallback;
+}
+
+function Stat({ label, value, title, big = false, children }) {
+  return (
+    <div className="result-stat" title={title}>
+      <div className="result-stat-label">{label}</div>
+      <div className={big ? 'result-stat-big' : 'result-stat-value'}>{children ?? value}</div>
+    </div>
+  );
+}
+
+// Solo test results, laid out like Monkeytype's result screen
+export default function ResultsPodium({ stats, testLabel = '', onPlayAgain }) {
   useEffect(() => {
     confetti({
-      particleCount: 100,
+      particleCount: 90,
       spread: 70,
       origin: { y: 0.6 },
-      colors: ['#e2b714', '#00ffc2', '#bd93f9', '#ffffff'],
+      colors: [cssVar('--main-color', '#e2b714'), '#ffffff'],
     });
   }, []);
 
-  // Find top 3 racers for the podium
-  const sortedRacers = [...participants].sort((a, b) => {
-    if (a.rank && b.rank) return a.rank - b.rank;
-    if (a.isFinished && !b.isFinished) return -1;
-    if (!a.isFinished && b.isFinished) return 1;
-    return (b.wpm || 0) - (a.wpm || 0);
-  });
+  // Enter or Tab starts the next test
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key === 'Tab' || e.key === 'Enter') {
+        e.preventDefault();
+        onPlayAgain?.();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onPlayAgain]);
 
-  const first = sortedRacers[0];
-  const second = sortedRacers[1];
-  const third = sortedRacers[2];
-
-  const selfRacer = participants.find((p) => p.id === selfId);
-  const selfRank = selfRacer?.rank || sortedRacers.findIndex((p) => p.id === selfId) + 1;
-
-  // Chart data
   const timeline = stats?.timeline || [];
-  const chartLabels = timeline.map((t) => `${t.second}s`);
-  const wpmData = timeline.map((t) => t.wpm);
-  const rawWpmData = timeline.map((t) => t.rawWpm);
+  const chars = stats?.characters || {};
 
-  const chartData = {
-    labels: chartLabels.length > 0 ? chartLabels : ['1s', '2s', '3s', '4s', '5s'],
-    datasets: [
-      {
-        label: 'WPM',
-        data: wpmData.length > 0 ? wpmData : [stats?.wpm || 0],
-        borderColor: '#e2b714',
-        backgroundColor: 'rgba(226, 183, 20, 0.15)',
-        tension: 0.3,
-        fill: true,
-      },
-      {
-        label: 'Raw WPM',
-        data: rawWpmData.length > 0 ? rawWpmData : [stats?.rawWpm || 0],
-        borderColor: '#646669',
-        backgroundColor: 'transparent',
-        borderDash: [5, 5],
-        tension: 0.3,
-        fill: false,
-      },
-    ],
-  };
+  const { data, options } = useMemo(() => {
+    const main = cssVar('--main-color', '#e2b714');
+    const sub = cssVar('--sub-color', '#646669');
+    const text = cssVar('--text-color', '#d1d0c5');
+    const error = cssVar('--error-color', '#ca4754');
+    const subAlt = cssVar('--sub-alt-color', '#2c2e31');
+    const labels = timeline.map((t) => t.second);
+    const maxErrors = Math.max(1, ...timeline.map((t) => t.errors));
 
-  const chartOptions = {
-    responsive: true,
-    maintainAspectRatio: false,
-    plugins: {
-      legend: {
-        labels: { color: '#d1d0c5', font: { family: 'Outfit', size: 12 } },
+    return {
+      data: {
+        labels,
+        datasets: [
+          {
+            type: 'line',
+            label: 'wpm',
+            data: timeline.map((t) => t.wpm),
+            borderColor: main,
+            backgroundColor: `${main}26`,
+            fill: true,
+            tension: 0.35,
+            pointRadius: 2,
+            borderWidth: 3,
+            yAxisID: 'y',
+            order: 2,
+          },
+          {
+            type: 'line',
+            label: 'raw',
+            data: timeline.map((t) => t.rawWpm),
+            borderColor: sub,
+            fill: false,
+            tension: 0.35,
+            pointRadius: 0,
+            borderWidth: 2,
+            yAxisID: 'y',
+            order: 3,
+          },
+          {
+            type: 'line',
+            label: 'errors',
+            data: timeline.map((t) => (t.errors > 0 ? t.errors : null)),
+            borderColor: error,
+            backgroundColor: error,
+            showLine: false,
+            pointStyle: 'crossRot',
+            pointRadius: 4,
+            pointBorderWidth: 2,
+            yAxisID: 'y2',
+            order: 1,
+          },
+        ],
       },
-      tooltip: {
-        backgroundColor: '#2c2e31',
-        titleColor: '#e2b714',
-        bodyColor: '#d1d0c5',
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        animation: { duration: 400 },
+        interaction: { mode: 'index', intersect: false },
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            backgroundColor: subAlt,
+            titleColor: main,
+            bodyColor: text,
+            callbacks: { title: (items) => `${items[0].label}s` },
+          },
+        },
+        scales: {
+          x: { grid: { color: `${sub}26` }, ticks: { color: sub } },
+          y: {
+            beginAtZero: true,
+            title: { display: true, text: 'Words per Minute', color: sub },
+            grid: { color: `${sub}26` },
+            ticks: { color: sub, precision: 0 },
+          },
+          y2: {
+            position: 'right',
+            beginAtZero: true,
+            max: maxErrors,
+            title: { display: true, text: 'Errors', color: sub },
+            grid: { display: false },
+            ticks: { color: sub, precision: 0 },
+          },
+        },
       },
-    },
-    scales: {
-      x: {
-        grid: { color: 'rgba(100, 102, 105, 0.15)' },
-        ticks: { color: '#646669' },
-      },
-      y: {
-        grid: { color: 'rgba(100, 102, 105, 0.15)' },
-        ticks: { color: '#646669' },
-      },
-    },
-  };
+    };
+  }, [timeline]);
 
   return (
     <div className="results-card">
-      {/* Race Winner & Podium */}
-      {isRace && sortedRacers.length > 1 && (
-        <div style={{ textAlign: 'center', marginBottom: '2rem' }}>
-          <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', background: 'rgba(226, 183, 20, 0.15)', padding: '0.4rem 1.2rem', borderRadius: '999px', color: 'var(--main-color)', fontWeight: 700, fontSize: '0.9rem', marginBottom: '1.25rem' }}>
-            <Trophy size={18} />
-            <span>Race Finished • You Ranked #{selfRank} of {participants.length}!</span>
-          </div>
-
-          <div className="podium-container">
-            {/* 2nd Place */}
-            {second && (
-              <div className="podium-step second">
-                <div className="podium-user">
-                  <div style={{ fontSize: '1.5rem' }}>🥈</div>
-                  <div className="podium-username">{second.username}</div>
-                  <div className="podium-wpm">{second.wpm} wpm</div>
-                </div>
-                <div className="podium-pillar">2</div>
-              </div>
-            )}
-
-            {/* 1st Place */}
-            {first && (
-              <div className="podium-step first">
-                <div className="podium-user">
-                  <div style={{ fontSize: '2rem' }}>👑</div>
-                  <div className="podium-username" style={{ color: 'var(--main-color)', fontWeight: 800 }}>
-                    {first.username}
-                  </div>
-                  <div className="podium-wpm" style={{ fontSize: '1rem', fontWeight: 700 }}>
-                    {first.wpm} wpm
-                  </div>
-                </div>
-                <div className="podium-pillar">1</div>
-              </div>
-            )}
-
-            {/* 3rd Place */}
-            {third && (
-              <div className="podium-step third">
-                <div className="podium-user">
-                  <div style={{ fontSize: '1.5rem' }}>🥉</div>
-                  <div className="podium-username">{third.username}</div>
-                  <div className="podium-wpm">{third.wpm} wpm</div>
-                </div>
-                <div className="podium-pillar">3</div>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* Monkeytype Signature Stats Summary */}
-      <div style={{
-        display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))',
-        gap: '1.5rem',
-        marginBottom: '2rem',
-        textAlign: 'center',
-      }}>
-        <div>
-          <div style={{ fontSize: '0.85rem', color: 'var(--sub-color)', textTransform: 'uppercase', fontWeight: 600 }}>wpm</div>
-          <div style={{ fontSize: '3.5rem', fontWeight: 800, color: 'var(--main-color)', fontFamily: 'var(--font-mono)', lineHeight: 1.1 }}>
+      <div className="result-main">
+        <div className="result-headline">
+          <Stat label="wpm" big title={`${stats?.wpm || 0} wpm (raw ${stats?.rawWpm || 0})`}>
             {stats?.wpm || 0}
-          </div>
+          </Stat>
+          <Stat label="acc" big title={`${stats?.accuracy ?? 100}% accuracy`}>
+            {stats?.accuracy ?? 100}%
+          </Stat>
         </div>
 
-        <div>
-          <div style={{ fontSize: '0.85rem', color: 'var(--sub-color)', textTransform: 'uppercase', fontWeight: 600 }}>acc</div>
-          <div style={{ fontSize: '3.5rem', fontWeight: 800, color: 'var(--main-color)', fontFamily: 'var(--font-mono)', lineHeight: 1.1 }}>
-            {stats?.accuracy || 100}%
-          </div>
-        </div>
-
-        <div>
-          <div style={{ fontSize: '0.85rem', color: 'var(--sub-color)', textTransform: 'uppercase', fontWeight: 600 }}>raw wpm</div>
-          <div style={{ fontSize: '2.5rem', fontWeight: 700, color: 'var(--text-color)', fontFamily: 'var(--font-mono)', marginTop: '0.5rem' }}>
-            {stats?.rawWpm || stats?.wpm || 0}
-          </div>
-        </div>
-
-        <div>
-          <div style={{ fontSize: '0.85rem', color: 'var(--sub-color)', textTransform: 'uppercase', fontWeight: 600 }}>time</div>
-          <div style={{ fontSize: '2.5rem', fontWeight: 700, color: 'var(--text-color)', fontFamily: 'var(--font-mono)', marginTop: '0.5rem' }}>
-            {stats?.time || 0}s
-          </div>
-        </div>
-
-        <div>
-          <div style={{ fontSize: '0.85rem', color: 'var(--sub-color)', textTransform: 'uppercase', fontWeight: 600 }}>characters</div>
-          <div style={{ fontSize: '1.2rem', fontWeight: 700, color: 'var(--text-color)', fontFamily: 'var(--font-mono)', marginTop: '0.9rem' }}>
-            <span style={{ color: 'var(--text-color)' }}>{stats?.characters?.correct || 0}</span> /{' '}
-            <span style={{ color: 'var(--error-color)' }}>{stats?.errors || 0}</span>
-          </div>
+        <div className="result-chart">
+          {timeline.length > 1 ? (
+            <Chart type="line" data={data} options={options} />
+          ) : (
+            <div style={{ color: 'var(--sub-color)', display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
+              Test too short for a graph
+            </div>
+          )}
         </div>
       </div>
 
-      {/* Chart.js WPM Graph */}
-      {timeline.length > 1 && (
-        <div style={{ height: '220px', width: '100%', marginBottom: '2rem' }}>
-          <Line data={chartData} options={chartOptions} />
-        </div>
-      )}
+      <div className="result-row">
+        {testLabel && <Stat label="test type" value={testLabel} />}
+        <Stat label="raw" value={stats?.rawWpm || 0} title="Raw WPM: every character typed, including mistakes" />
+        <Stat
+          label="characters"
+          title="correct / incorrect / extra / missed"
+          value={`${chars.correct || 0}/${chars.incorrect || 0}/${chars.extra || 0}/${chars.missed || 0}`}
+        />
+        <Stat label="consistency" value={`${stats?.consistency ?? 100}%`} title="How steady your typing speed was" />
+        <Stat label="time" value={`${Math.round(stats?.time || 0)}s`} />
+      </div>
 
-      {/* Action Buttons */}
-      <div style={{ display: 'flex', justifyContent: 'center', gap: '1rem', flexWrap: 'wrap' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.5rem' }}>
         <button className="btn-primary" onClick={onPlayAgain}>
           <RotateCcw size={18} />
-          <span>{isRace ? (isHost ? 'Start New Race' : 'Back to Lobby') : 'Play Again'}</span>
+          <span>Next Test</span>
         </button>
+        <span style={{ fontSize: '0.75rem', color: 'var(--sub-color)' }}>
+          or press <kbd className="kbd-hint">Tab</kbd> / <kbd className="kbd-hint">Enter</kbd>
+        </span>
       </div>
     </div>
   );

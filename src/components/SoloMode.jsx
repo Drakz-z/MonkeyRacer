@@ -108,7 +108,7 @@ export default function SoloMode() {
       ) : (
         <ResultsPodium
           stats={stats}
-          isRace={false}
+          testLabel={config.mode === 'time' ? `time ${config.amount}` : `words ${config.amount}`}
           onPlayAgain={generateNewTest}
         />
       )}

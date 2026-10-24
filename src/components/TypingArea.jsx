@@ -1,11 +1,50 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { RotateCcw, Smartphone, Clock, FileText, CheckCircle2 } from 'lucide-react';
+import React, { useState, useEffect, useLayoutEffect, useRef, useCallback, memo } from 'react';
+import { RotateCcw, Smartphone, Clock } from 'lucide-react';
 import { soundEngine } from '../utils/sound';
+import {
+  computeCharStats,
+  wpmFromChars,
+  rawFromChars,
+  accuracyFromKeys,
+  consistencyFromRaw,
+} from '../utils/stats';
+
+const TICK_MS = 100;
+const PROGRESS_EMIT_MS = 500;
+
+// Memoized so a keystroke only re-renders the active word, not the whole word list
+const Word = memo(function Word({ word, typed, status, index }) {
+  const isPast = status === 'past';
+  const isCurrent = status === 'current';
+  const hasError = isPast && typed !== word;
+
+  return (
+    <div data-word-index={index} className={`word ${hasError ? 'error-word' : ''}`}>
+      {word.split('').map((char, i) => {
+        let cls = 'char';
+        if ((isPast || isCurrent) && i < typed.length) {
+          cls += typed[i] === char ? ' correct' : ' incorrect';
+        }
+        return (
+          <span key={i} className={cls}>
+            {char}
+          </span>
+        );
+      })}
+      {typed.length > word.length &&
+        typed.slice(word.length).split('').map((char, i) => (
+          <span key={`x${i}`} className="char extra">
+            {char}
+          </span>
+        ))}
+    </div>
+  );
+});
 
 export default function TypingArea({
   text = '',
   mode = 'words', // 'words' | 'time'
-  timeLimit = null, // e.g. 120, 60, 30, 15
+  timeLimit = null,
   isRace = false,
   raceStarted = true,
   onProgressUpdate,
@@ -15,468 +54,417 @@ export default function TypingArea({
   disabled = false,
 }) {
   const words = React.useMemo(() => (text ? text.trim().split(/\s+/) : []), [text]);
+  const inputDisabled = disabled || !raceStarted;
 
+  // Render state
   const [currentWordIndex, setCurrentWordIndex] = useState(0);
   const [typedWords, setTypedWords] = useState([]);
-  const [currentInputVal, setCurrentInputVal] = useState('');
-  
-  const [startTime, setStartTime] = useState(null);
-  const [elapsedTime, setElapsedTime] = useState(0);
-  const [timeLeft, setTimeLeft] = useState(timeLimit || 120);
-
-  const [wpm, setWpm] = useState(0);
-  const [rawWpm, setRawWpm] = useState(0);
-  const [accuracy, setAccuracy] = useState(100);
-
+  const [currentInput, setCurrentInput] = useState('');
+  const [started, setStarted] = useState(false);
+  const [elapsed, setElapsed] = useState(0);
+  const [liveWpm, setLiveWpm] = useState(0);
+  const [liveAcc, setLiveAcc] = useState(100);
   const [isFocused, setIsFocused] = useState(true);
-  const [caretPos, setCaretPos] = useState({ left: 0, top: 0, height: 28 });
+  const [caret, setCaret] = useState({ x: 0, y: 0, h: 28 });
   const [containerOffset, setContainerOffset] = useState(0);
 
-  // Keystroke statistics for accurate accuracy & WPM
-  const totalKeystrokesRef = useRef(0);
-  const correctKeystrokesRef = useRef(0);
-  const mistakesRef = useRef(0);
-  const timelineRef = useRef([]);
+  // Source of truth for the typing engine (refs never go stale between fast keystrokes)
+  const engine = useRef(null);
+  const resetEngine = () => {
+    engine.current = {
+      index: 0,
+      typed: [],
+      input: '',
+      startAt: null,
+      correctKeys: 0,
+      incorrectKeys: 0,
+      secondKeys: 0,
+      secondErrors: 0,
+      nextSecond: 1,
+      timeline: [],
+      lastEmit: 0,
+      finished: false,
+    };
+  };
+  if (engine.current === null) resetEngine();
+
+  // Latest props for the clock callback
+  const propsRef = useRef({});
+  propsRef.current = { words, mode, timeLimit, isRace, onProgressUpdate, onFinish, onStart };
 
   const inputRef = useRef(null);
   const wordsContainerRef = useRef(null);
-  const wordsWrapperRef = useRef(null);
-  const timerIntervalRef = useRef(null);
-  const finishedRef = useRef(false);
+  const clockRef = useRef(null);
 
-  // Initialize state when text or timeLimit changes
-  useEffect(() => {
-    resetState();
-  }, [text, timeLimit, mode]);
+  const stopClock = () => {
+    if (clockRef.current) clearInterval(clockRef.current);
+    clockRef.current = null;
+  };
 
-  const resetState = () => {
+  const resetState = useCallback(() => {
+    stopClock();
+    resetEngine();
     setCurrentWordIndex(0);
-    setCurrentInputVal('');
-    setTypedWords(new Array(words.length).fill(''));
-    setStartTime(null);
-    setElapsedTime(0);
-    setTimeLeft(timeLimit || (mode === 'time' ? 120 : 0));
-    setWpm(0);
-    setRawWpm(0);
-    setAccuracy(100);
+    setTypedWords([]);
+    setCurrentInput('');
+    setStarted(false);
+    setElapsed(0);
+    setLiveWpm(0);
+    setLiveAcc(100);
     setContainerOffset(0);
-
-    totalKeystrokesRef.current = 0;
-    correctKeystrokesRef.current = 0;
-    mistakesRef.current = 0;
-    timelineRef.current = [];
-    finishedRef.current = false;
-
-    if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
     if (inputRef.current) {
       inputRef.current.value = '';
       inputRef.current.focus();
     }
+  }, []);
+
+  useEffect(() => {
+    resetState();
+  }, [text, timeLimit, mode, resetState]);
+
+  useEffect(() => stopClock, []);
+
+  // Focus as soon as typing becomes possible (e.g. when a race countdown ends)
+  useEffect(() => {
+    if (!inputDisabled) inputRef.current?.focus();
+  }, [inputDisabled]);
+
+  // Any printable key refocuses the test, like Monkeytype
+  useEffect(() => {
+    const onKey = (e) => {
+      if (inputDisabled || document.activeElement === inputRef.current) return;
+      const tag = document.activeElement?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || document.activeElement?.isContentEditable) return;
+      if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        inputRef.current?.focus();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [inputDisabled]);
+
+  /* ---------------- stats ---------------- */
+
+  const elapsedSeconds = () => {
+    const e = engine.current;
+    return e.startAt ? (performance.now() - e.startAt) / 1000 : 0;
   };
 
-  // Focus the input as soon as typing becomes possible (e.g. when a race countdown ends)
-  useEffect(() => {
-    if (raceStarted && !disabled && inputRef.current) {
-      inputRef.current.focus();
-    }
-  }, [raceStarted, disabled]);
+  const currentChars = () => {
+    const e = engine.current;
+    return computeCharStats(propsRef.current.words, e.typed, e.index, e.input);
+  };
 
-  // Timer loop
-  useEffect(() => {
-    if (startTime && raceStarted) {
-      timerIntervalRef.current = setInterval(() => {
-        const seconds = (Date.now() - startTime) / 1000;
-        setElapsedTime(seconds);
-
-        // If time mode, handle countdown
-        if (mode === 'time' && timeLimit) {
-          const remaining = Math.max(0, Math.ceil(timeLimit - seconds));
-          setTimeLeft(remaining);
-          if (remaining <= 0) {
-            finishTypingTest();
-            return;
-          }
-        }
-
-        // Live WPM calculation
-        const mins = seconds / 60;
-        const correctChars = correctKeystrokesRef.current;
-        const totalChars = totalKeystrokesRef.current;
-
-        const liveWpm = mins > 0 ? Math.round((correctChars / 5) / mins) : 0;
-        const liveRawWpm = mins > 0 ? Math.round((totalChars / 5) / mins) : 0;
-        
-        const totalAttempts = correctKeystrokesRef.current + mistakesRef.current;
-        const liveAcc = totalAttempts > 0
-          ? Math.max(0, Math.min(100, Math.round((correctKeystrokesRef.current / totalAttempts) * 100)))
-          : 100;
-
-        setWpm(liveWpm);
-        setRawWpm(liveRawWpm);
-        setAccuracy(liveAcc);
-
-        // Record timeline
-        if (seconds >= timelineRef.current.length) {
-          timelineRef.current.push({
-            second: Math.round(seconds),
-            wpm: liveWpm,
-            rawWpm: liveRawWpm,
-            errors: mistakesRef.current,
-          });
-        }
-
-        // Emit race progress update
-        if (isRace && onProgressUpdate) {
-          const progressPercent = mode === 'time' && timeLimit
-            ? Math.min(100, Math.round((seconds / timeLimit) * 100))
-            : Math.min(100, Math.round((currentWordIndex / words.length) * 100));
-
-          onProgressUpdate({
-            progress: progressPercent,
-            charProgress: correctChars,
-            wpm: liveWpm,
-            rawWpm: liveRawWpm,
-            accuracy: liveAcc,
-            errors: mistakesRef.current,
-            isFinished: false,
-          });
-        }
-      }, 500);
-    } else {
-      if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
-    }
-
-    return () => {
-      if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
-    };
-  }, [startTime, raceStarted, mode, timeLimit, words.length, currentWordIndex, isRace, onProgressUpdate]);
-
-  // Caret positioning & smooth rolling line scroll
-  const updateCaretPosition = useCallback(() => {
-    if (!wordsContainerRef.current) return;
-
-    const wordEl = wordsContainerRef.current.querySelector(`[data-word-index="${currentWordIndex}"]`);
-    if (!wordEl) return;
-
-    const containerRect = wordsContainerRef.current.getBoundingClientRect();
-    const charElements = wordEl.querySelectorAll('.char');
-    const currentTyped = currentInputVal || '';
-
-    let targetLeft = 0;
-    let targetTop = 0;
-    let targetHeight = 28;
-
-    if (currentTyped.length === 0) {
-      // Position caret at the beginning of the active word
-      if (charElements.length > 0) {
-        const firstCharRect = charElements[0].getBoundingClientRect();
-        targetLeft = firstCharRect.left - containerRect.left;
-        targetTop = firstCharRect.top - containerRect.top;
-        targetHeight = firstCharRect.height || 28;
-      } else {
-        const wordRect = wordEl.getBoundingClientRect();
-        targetLeft = wordRect.left - containerRect.left;
-        targetTop = wordRect.top - containerRect.top;
-        targetHeight = wordRect.height || 28;
-      }
-    } else {
-      // Position caret immediately after the last typed character in the active word
-      const charIdx = currentTyped.length - 1;
-      if (charIdx < charElements.length) {
-        const charRect = charElements[charIdx].getBoundingClientRect();
-        targetLeft = charRect.right - containerRect.left;
-        targetTop = charRect.top - containerRect.top;
-        targetHeight = charRect.height || 28;
-      } else {
-        // Extra characters typed past target word length
-        const lastChar = charElements[charElements.length - 1];
-        if (lastChar) {
-          const lastCharRect = lastChar.getBoundingClientRect();
-          targetLeft = lastCharRect.right - containerRect.left;
-          targetTop = lastCharRect.top - containerRect.top;
-          targetHeight = lastCharRect.height || 28;
-        } else {
-          const wordRect = wordEl.getBoundingClientRect();
-          targetLeft = wordRect.right - containerRect.left;
-          targetTop = wordRect.top - containerRect.top;
-          targetHeight = wordRect.height || 28;
-        }
-      }
-    }
-
-    setCaretPos({
-      left: Math.round(targetLeft),
-      top: Math.round(targetTop),
-      height: Math.round(targetHeight),
+  const pushSecond = (second, fraction = 1) => {
+    const e = engine.current;
+    const chars = currentChars();
+    e.timeline.push({
+      second,
+      wpm: wpmFromChars(chars, second),
+      rawWpm: Math.round((e.secondKeys / 5) * 60 / fraction),
+      errors: e.secondErrors,
     });
+    e.secondKeys = 0;
+    e.secondErrors = 0;
+  };
 
-    // Dynamic 3-line rolling scroll: keep the active line on line 2 (middle)
-    if (wordsWrapperRef.current && wordsContainerRef.current) {
-      const firstWord = wordsContainerRef.current.querySelector('[data-word-index="0"]');
-      const baseTop = firstWord ? firstWord.offsetTop : 0;
-      const currentWordTop = wordEl.offsetTop;
+  const finishTest = () => {
+    const e = engine.current;
+    if (e.finished || !e.startAt) return;
+    e.finished = true;
+    stopClock();
+    soundEngine.playFinishSound();
 
-      // Group words by distinct vertical line offsets
-      const lineTops = [];
-      const allWordEls = wordsContainerRef.current.querySelectorAll('.word');
-      for (let i = 0; i <= currentWordIndex; i++) {
-        const el = allWordEls[i];
-        if (el) {
-          const top = el.offsetTop;
-          if (!lineTops.includes(top)) {
-            lineTops.push(top);
-          }
-        }
-      }
+    const { mode: m, timeLimit: limit, isRace: race, onFinish: finishCb, onProgressUpdate: progressCb } = propsRef.current;
+    const measured = Math.max(0.5, elapsedSeconds());
+    // A timed test that ran out the clock lasted exactly its limit
+    const seconds = m === 'time' && limit && measured >= limit - 0.2 ? limit : measured;
 
-      const currentLineIdx = lineTops.indexOf(currentWordTop);
-      if (currentLineIdx >= 2) {
-        // Show line above as top line, active line as middle line
-        const scrollTargetTop = lineTops[currentLineIdx - 1];
-        setContainerOffset(scrollTargetTop - baseTop);
-      } else {
-        setContainerOffset(0);
-      }
+    // Close out the per-second timeline (scale a trailing partial second)
+    while (e.nextSecond <= Math.floor(seconds)) {
+      pushSecond(e.nextSecond);
+      e.nextSecond += 1;
     }
-  }, [currentWordIndex, currentInputVal]);
+    const partial = seconds - Math.floor(seconds);
+    if (partial >= 0.25 && e.secondKeys > 0) pushSecond(Math.round(seconds * 10) / 10, partial);
 
-  useEffect(() => {
-    updateCaretPosition();
-    window.addEventListener('resize', updateCaretPosition);
-    document.fonts?.ready?.then(updateCaretPosition);
-    return () => {
-      window.removeEventListener('resize', updateCaretPosition);
+    const chars = currentChars();
+    const wpm = wpmFromChars(chars, seconds);
+    const rawWpm = rawFromChars(chars, seconds);
+    const accuracy = accuracyFromKeys(e.correctKeys, e.incorrectKeys);
+    const consistency = consistencyFromRaw(e.timeline.map((t) => t.rawWpm));
+
+    const stats = {
+      wpm,
+      rawWpm,
+      accuracy,
+      consistency,
+      errors: e.incorrectKeys,
+      time: Math.round(seconds * 10) / 10,
+      characters: {
+        correct: chars.correct,
+        incorrect: chars.incorrect,
+        extra: chars.extra,
+        missed: chars.missed,
+      },
+      timeline: e.timeline,
     };
-  }, [updateCaretPosition]);
 
-  // Handle Control Keys: Tab, Space, Backspace
-  const handleKeyDown = (e) => {
-    if (disabled || !raceStarted) return;
+    setLiveWpm(wpm);
+    setLiveAcc(accuracy);
+    finishCb?.(stats);
+    if (race && progressCb) {
+      progressCb({ progress: 100, charProgress: chars.correct, wpm, rawWpm, accuracy, errors: e.incorrectKeys, isFinished: true });
+    }
+  };
 
-    // Tab: Instant restart
-    if (e.key === 'Tab') {
-      e.preventDefault();
+  const tick = () => {
+    const e = engine.current;
+    if (!e.startAt || e.finished) return;
+    const secs = elapsedSeconds();
+    const { mode: m, timeLimit: limit, words: w, isRace: race, onProgressUpdate: progressCb } = propsRef.current;
+
+    while (secs >= e.nextSecond && !(m === 'time' && limit && e.nextSecond > limit)) {
+      pushSecond(e.nextSecond);
+      e.nextSecond += 1;
+    }
+
+    if (m === 'time' && limit && secs >= limit) {
+      finishTest();
+      return;
+    }
+
+    const chars = currentChars();
+    const wpm = wpmFromChars(chars, secs);
+    const acc = accuracyFromKeys(e.correctKeys, e.incorrectKeys);
+    setElapsed(secs);
+    setLiveWpm(wpm);
+    setLiveAcc(acc);
+
+    const now = performance.now();
+    if (race && progressCb && now - e.lastEmit >= PROGRESS_EMIT_MS) {
+      e.lastEmit = now;
+      const progress = m === 'time' && limit
+        ? Math.min(100, Math.round((secs / limit) * 100))
+        : Math.min(100, Math.round((e.index / w.length) * 100));
+      progressCb({
+        progress,
+        charProgress: chars.correct,
+        wpm,
+        rawWpm: rawFromChars(chars, secs),
+        accuracy: acc,
+        errors: e.incorrectKeys,
+        isFinished: false,
+      });
+    }
+  };
+
+  const startClock = () => {
+    const e = engine.current;
+    if (e.startAt) return;
+    e.startAt = performance.now();
+    setStarted(true);
+    stopClock();
+    clockRef.current = setInterval(tick, TICK_MS);
+    propsRef.current.onStart?.();
+  };
+
+  /* ---------------- input handling ---------------- */
+
+  const syncRender = () => {
+    const e = engine.current;
+    setCurrentWordIndex(e.index);
+    setTypedWords(e.typed.slice());
+    setCurrentInput(e.input);
+  };
+
+  const recordKey = (isCorrect) => {
+    const e = engine.current;
+    if (isCorrect) e.correctKeys += 1;
+    else {
+      e.incorrectKeys += 1;
+      e.secondErrors += 1;
+    }
+    e.secondKeys += 1;
+  };
+
+  const submitWord = () => {
+    const e = engine.current;
+    if (!e.input) return; // Ignore space on an empty word
+    const target = words[e.index] || '';
+    recordKey(e.input === target);
+    soundEngine.playKeySound(true);
+
+    e.typed[e.index] = e.input;
+    e.input = '';
+    if (inputRef.current) inputRef.current.value = '';
+
+    if (e.index + 1 >= words.length) {
+      e.index += 1;
+      syncRender();
+      finishTest();
+      return;
+    }
+    e.index += 1;
+    syncRender();
+  };
+
+  const handleKeyDown = (ev) => {
+    if (inputDisabled || engine.current.finished) return;
+
+    if (ev.key === 'Tab') {
+      ev.preventDefault();
       handleRestartClick();
       return;
     }
 
-    // Space: Submit current word and advance
-    if (e.key === ' ') {
-      e.preventDefault();
-      const currentVal = inputRef.current ? inputRef.current.value : currentInputVal;
-      
-      // Do nothing if current word is empty (prevent consecutive spaces)
-      if (!currentVal || currentVal.length === 0) return;
-
-      // Start timer on first word submission if not started
-      if (!startTime) {
-        setStartTime(Date.now());
-        if (onStart) onStart();
-      }
-
-      soundEngine.playKeySound(true);
-
-      // Check current word accuracy
-      const targetWord = words[currentWordIndex] || '';
-      totalKeystrokesRef.current += 1; // space counts as keystroke
-      if (currentVal === targetWord) {
-        correctKeystrokesRef.current += 1;
-      } else {
-        mistakesRef.current += 1;
-      }
-
-      // Record finished word in array
-      const newTypedWords = [...typedWords];
-      newTypedWords[currentWordIndex] = currentVal;
-      setTypedWords(newTypedWords);
-
-      // Clear input element and current input state
-      if (inputRef.current) inputRef.current.value = '';
-      setCurrentInputVal('');
-
-      // Advance to next word
-      const nextWordIndex = currentWordIndex + 1;
-      if (nextWordIndex >= words.length) {
-        finishTypingTest();
-      } else {
-        setCurrentWordIndex(nextWordIndex);
-      }
+    if (ev.key === ' ') {
+      ev.preventDefault();
+      submitWord();
       return;
     }
 
-    // Backspace on empty input: Jump back to previous word
-    if (e.key === 'Backspace') {
-      const currentVal = inputRef.current ? inputRef.current.value : currentInputVal;
-      if (currentVal.length === 0 && currentWordIndex > 0) {
-        e.preventDefault();
+    // Backspace on an empty word goes back — only into a word that was typed wrong (Monkeytype rule)
+    if (ev.key === 'Backspace') {
+      const e = engine.current;
+      if (e.input.length === 0 && e.index > 0) {
+        ev.preventDefault();
+        const prev = e.typed[e.index - 1] || '';
+        if (prev === words[e.index - 1]) return;
+        e.index -= 1;
+        e.input = ev.ctrlKey || ev.altKey || ev.metaKey ? '' : prev;
+        e.typed.length = e.index;
+        if (inputRef.current) inputRef.current.value = e.input;
         soundEngine.playKeySound(false);
-
-        const prevIndex = currentWordIndex - 1;
-        const prevWord = typedWords[prevIndex] || '';
-
-        setCurrentWordIndex(prevIndex);
-        setCurrentInputVal(prevWord);
-        if (inputRef.current) {
-          inputRef.current.value = prevWord;
-        }
-        return;
+        syncRender();
       }
     }
   };
 
-  // Main input handler for both physical & virtual/mobile keyboards
-  const handleInput = (e) => {
-    if (disabled || !raceStarted) return;
+  const handleInput = (ev) => {
+    if (inputDisabled || engine.current.finished) return;
+    const e = engine.current;
+    let val = ev.target.value;
 
-    if (!startTime) {
-      setStartTime(Date.now());
-      if (onStart) onStart();
-    }
-
-    let val = e.target.value;
-
-    // Handle space entered via soft keyboard / mobile autocomplete
-    if (val.endsWith(' ') || val.includes(' ')) {
-      soundEngine.playKeySound(true);
-      const parts = val.split(' ');
-      const completedWord = parts[0];
-
-      if (completedWord.length > 0) {
-        const targetWord = words[currentWordIndex] || '';
-        totalKeystrokesRef.current += 1;
-        if (completedWord === targetWord) {
-          correctKeystrokesRef.current += 1;
-        } else {
-          mistakesRef.current += 1;
-        }
-
-        const newTypedWords = [...typedWords];
-        newTypedWords[currentWordIndex] = completedWord;
-        setTypedWords(newTypedWords);
-
-        if (inputRef.current) inputRef.current.value = '';
-        setCurrentInputVal('');
-
-        const nextIndex = currentWordIndex + 1;
-        if (nextIndex >= words.length) {
-          finishTypingTest();
-        } else {
-          setCurrentWordIndex(nextIndex);
-        }
-      } else {
-        if (inputRef.current) inputRef.current.value = '';
-        setCurrentInputVal('');
+    // Soft keyboards / autocomplete can insert spaces — split them into word submissions
+    if (val.includes(' ')) {
+      const [first] = val.split(' ');
+      if (first.length > e.input.length) {
+        if (!e.startAt) startClock();
+        const target = words[e.index] || '';
+        for (let i = e.input.length; i < first.length; i++) recordKey(first[i] === target[i]);
       }
+      e.input = first;
+      submitWord();
+      if (inputRef.current) inputRef.current.value = '';
       return;
     }
 
-    // Normal typing update
+    if (!e.startAt && val.length > 0) startClock();
+
+    const target = words[e.index] || '';
+    if (val.length > e.input.length) {
+      for (let i = e.input.length; i < val.length; i++) recordKey(val[i] === target[i]);
+    }
     soundEngine.playKeySound(false);
 
-    // Track real-time accuracy on every single keystroke
-    if (val.length > currentInputVal.length) {
-      // User typed a new character
-      const charIndex = val.length - 1;
-      const targetWord = words[currentWordIndex] || '';
-      const typedChar = val[charIndex];
-      const expectedChar = targetWord[charIndex];
+    e.input = val;
+    setCurrentInput(val);
 
-      totalKeystrokesRef.current += 1;
-      if (typedChar === expectedChar) {
-        correctKeystrokesRef.current += 1;
-      } else {
-        mistakesRef.current += 1;
-      }
-    }
-
-    // Immediately recalculate live accuracy
-    const totalAttempts = correctKeystrokesRef.current + mistakesRef.current;
-    if (totalAttempts > 0) {
-      const currentAcc = Math.max(0, Math.min(100, Math.round((correctKeystrokesRef.current / totalAttempts) * 100)));
-      setAccuracy(currentAcc);
-    }
-
-    setCurrentInputVal(val);
-
-    // If last word typed completely and matches
-    if (currentWordIndex === words.length - 1 && val === words[currentWordIndex]) {
-      finishTypingTest();
-    }
-  };
-
-  const finishTypingTest = () => {
-    if (finishedRef.current) return;
-    finishedRef.current = true;
-    soundEngine.playFinishSound();
-    // A timed test that ran out the clock lasted exactly the time limit; measure against it
-    // directly instead of the (coarse) interval timestamp
-    const measuredSeconds = startTime ? Math.max(1, (Date.now() - startTime) / 1000) : 1;
-    const finalSeconds = mode === 'time' && timeLimit && measuredSeconds >= timeLimit - 1
-      ? timeLimit
-      : measuredSeconds;
-    if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
-
-    const totalChars = totalKeystrokesRef.current;
-    const correctChars = correctKeystrokesRef.current;
-    const finalMins = finalSeconds / 60;
-
-    const finalWpm = Math.round((correctChars / 5) / finalMins);
-    const finalRawWpm = Math.round((totalChars / 5) / finalMins);
-    const totalAttempts = correctChars + mistakesRef.current;
-    const finalAcc = totalAttempts > 0 ? Math.round((correctChars / totalAttempts) * 100) : 100;
-
-    const stats = {
-      wpm: finalWpm,
-      rawWpm: finalRawWpm,
-      accuracy: finalAcc,
-      errors: mistakesRef.current,
-      time: Math.round(finalSeconds * 10) / 10,
-      characters: {
-        correct: correctChars,
-        incorrect: mistakesRef.current,
-        extra: 0,
-        missed: 0,
-      },
-      timeline: timelineRef.current,
-    };
-
-    if (onFinish) {
-      onFinish(stats);
-    }
-    if (isRace && onProgressUpdate) {
-      onProgressUpdate({
-        progress: 100,
-        charProgress: totalChars,
-        wpm: finalWpm,
-        rawWpm: finalRawWpm,
-        accuracy: finalAcc,
-        errors: mistakesRef.current,
-        isFinished: true,
-      });
+    // Finishing the last word exactly ends a words test without needing a space
+    if (e.index === words.length - 1 && val === target) {
+      finishTest();
     }
   };
 
   const handleRestartClick = () => {
     resetState();
-    if (onRestart) onRestart();
+    onRestart?.();
   };
 
   const focusInput = () => {
-    if (inputRef.current) {
-      inputRef.current.focus();
-      const len = inputRef.current.value ? inputRef.current.value.length : 0;
-      try {
-        inputRef.current.setSelectionRange(len, len);
-      } catch (err) {}
-      setIsFocused(true);
+    if (!inputRef.current) return;
+    inputRef.current.focus();
+    const len = inputRef.current.value.length;
+    try {
+      inputRef.current.setSelectionRange(len, len);
+    } catch {
+      // Some mobile inputs don't support selection ranges
     }
+    setIsFocused(true);
   };
 
-  // Format timer seconds into mm:ss
+  /* ---------------- caret & line scrolling ---------------- */
+
+  const updateCaret = useCallback(() => {
+    const container = wordsContainerRef.current;
+    if (!container) return;
+    const wordEl = container.querySelector(`[data-word-index="${currentWordIndex}"]`);
+    if (!wordEl) return;
+
+    const containerRect = container.getBoundingClientRect();
+    const chars = wordEl.querySelectorAll('.char');
+    let rect;
+    let atEnd = false;
+    if (currentInput.length === 0) {
+      rect = (chars[0] || wordEl).getBoundingClientRect();
+    } else {
+      const idx = Math.min(currentInput.length, chars.length) - 1;
+      rect = (chars[idx] || wordEl).getBoundingClientRect();
+      atEnd = true;
+    }
+    setCaret({
+      x: Math.round((atEnd ? rect.right : rect.left) - containerRect.left),
+      y: Math.round(rect.top - containerRect.top),
+      h: Math.round(rect.height) || 28,
+    });
+  }, [currentWordIndex, currentInput]);
+
+  // Keep the active line as the 2nd visible line (3-line Monkeytype window)
+  const updateScroll = useCallback(() => {
+    const container = wordsContainerRef.current;
+    if (!container) return;
+    const wordEl = container.querySelector(`[data-word-index="${currentWordIndex}"]`);
+    if (!wordEl) return;
+    const lineTops = [];
+    const all = container.children;
+    for (let i = 0; i < all.length; i++) {
+      const el = all[i];
+      if (!el.classList.contains('word')) continue;
+      const top = el.offsetTop;
+      if (lineTops[lineTops.length - 1] !== top) lineTops.push(top);
+      if (el === wordEl) break;
+    }
+    const lineIdx = lineTops.length - 1;
+    setContainerOffset(lineIdx >= 2 ? lineTops[lineIdx - 1] - lineTops[0] : 0);
+  }, [currentWordIndex]);
+
+  useLayoutEffect(() => {
+    updateCaret();
+  }, [updateCaret, words]);
+
+  useLayoutEffect(() => {
+    updateScroll();
+  }, [updateScroll, words]);
+
+  useEffect(() => {
+    const onResize = () => {
+      updateScroll();
+      updateCaret();
+    };
+    window.addEventListener('resize', onResize);
+    document.fonts?.ready?.then(onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, [updateCaret, updateScroll]);
+
+  /* ---------------- render ---------------- */
+
+  const timeLeft = mode === 'time' && timeLimit ? Math.max(0, Math.ceil(timeLimit - elapsed)) : 0;
+
   const formatTime = (secs) => {
     const m = Math.floor(secs / 60);
     const s = Math.floor(secs % 60);
-    return m > 0 ? `${m}:${s < 10 ? '0' : ''}${s}` : `${s}s`;
+    return m > 0 ? `${m}:${s < 10 ? '0' : ''}${s}` : `${s}`;
   };
 
   return (
@@ -495,106 +483,72 @@ export default function TypingArea({
         onInput={handleInput}
         onFocus={() => setIsFocused(true)}
         onBlur={() => setIsFocused(false)}
-        disabled={disabled || !raceStarted}
+        disabled={inputDisabled}
       />
 
       {/* Live Metrics Bar */}
-      <div className="live-metrics">
-        {/* Timer / Words counter */}
+      <div className={`live-metrics ${started ? 'active' : ''}`}>
         {mode === 'time' ? (
-          <div className="metric-item" style={{ color: timeLeft <= 10 && startTime ? 'var(--error-color)' : 'var(--main-color)' }}>
-            <Clock size={22} style={{ marginRight: 4 }} />
-            <span>{formatTime(timeLeft)}</span>
-            <span className="metric-label">left</span>
+          <div className="metric-item" style={{ color: timeLeft <= 5 && started ? 'var(--error-color)' : 'var(--main-color)' }}>
+            <Clock size={22} style={{ marginRight: 4, alignSelf: 'center' }} />
+            <span>{formatTime(started ? timeLeft : (timeLimit || 0))}</span>
           </div>
         ) : (
           <div className="metric-item">
             <span>{currentWordIndex}/{words.length}</span>
-            <span className="metric-label">words</span>
           </div>
         )}
 
-        {/* Live WPM */}
         <div className="metric-item">
-          <span>{wpm}</span>
+          <span>{liveWpm}</span>
           <span className="metric-label">wpm</span>
         </div>
 
-        {/* Live Accuracy */}
-        <div className="metric-item" style={{ color: accuracy < 90 ? 'var(--error-color)' : 'var(--main-color)' }}>
-          <span>{accuracy}%</span>
+        <div className="metric-item" style={{ color: liveAcc < 90 ? 'var(--error-color)' : 'var(--main-color)' }}>
+          <span>{liveAcc}%</span>
           <span className="metric-label">acc</span>
         </div>
       </div>
 
       {/* 3-Line Monkeytype Rolling Words Display */}
-      <div className="words-wrapper" ref={wordsWrapperRef}>
+      <div className={`words-wrapper ${isFocused || inputDisabled ? '' : 'blurred'}`}>
         <div
           className="words-container"
           ref={wordsContainerRef}
-          style={{ transform: `translateY(-${containerOffset}px)` }}
+          style={{ transform: `translate3d(0, -${containerOffset}px, 0)` }}
         >
-          {/* Smooth Caret */}
-          {isFocused && (
+          {isFocused && !inputDisabled && (
             <div
-              className={`smooth-caret ${!startTime ? 'blink' : ''}`}
+              className={`smooth-caret ${!started ? 'blink' : ''}`}
               style={{
-                left: `${caretPos.left}px`,
-                top: `${caretPos.top}px`,
-                height: `${caretPos.height}px`,
+                transform: `translate3d(${caret.x}px, ${caret.y}px, 0)`,
+                height: `${caret.h}px`,
               }}
             />
           )}
 
-          {/* Words */}
-          {words.map((word, wordIdx) => {
-            const isCurrent = wordIdx === currentWordIndex;
-            const isPast = wordIdx < currentWordIndex;
-            const typedWord = isCurrent ? currentInputVal : (typedWords[wordIdx] || '');
-            const hasError = isPast && typedWord !== word;
-
-            return (
-              <div
-                key={wordIdx}
-                data-word-index={wordIdx}
-                className={`word ${hasError ? 'error-word' : ''}`}
-              >
-                {/* Standard characters in target word */}
-                {word.split('').map((char, charIdx) => {
-                  let charClass = 'char';
-                  if (isPast) {
-                    charClass += typedWord[charIdx] === char ? ' correct' : ' incorrect';
-                  } else if (isCurrent) {
-                    if (charIdx < typedWord.length) {
-                      charClass += typedWord[charIdx] === char ? ' correct' : ' incorrect';
-                    }
-                  }
-                  return (
-                    <span key={charIdx} className={charClass}>
-                      {char}
-                    </span>
-                  );
-                })}
-
-                {/* Extra characters typed past word length */}
-                {typedWord.length > word.length && (
-                  typedWord.slice(word.length).split('').map((char, extraIdx) => (
-                    <span key={`extra-${extraIdx}`} className="char extra">
-                      {char}
-                    </span>
-                  ))
-                )}
-              </div>
-            );
-          })}
+          {words.map((word, i) => (
+            <Word
+              key={i}
+              index={i}
+              word={word}
+              status={i < currentWordIndex ? 'past' : i === currentWordIndex ? 'current' : 'future'}
+              typed={i < currentWordIndex ? (typedWords[i] || '') : i === currentWordIndex ? currentInput : ''}
+            />
+          ))}
         </div>
+
+        {!isFocused && !inputDisabled && (
+          <div className="focus-overlay" onClick={focusInput}>
+            Click here or press any key to focus
+          </div>
+        )}
       </div>
 
-      {/* Mobile Focus Hint / Tap to Type Alert */}
-      {!isFocused && (
+      {!isFocused && !inputDisabled && (
         <div className="click-to-focus-hint" onClick={focusInput}>
           <Smartphone size={16} />
-          <span>Tap anywhere or click here to focus typing keyboard</span>
+          <span>Tap to type</span>
         </div>
       )}
 
@@ -602,7 +556,10 @@ export default function TypingArea({
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.5rem', marginTop: '1.5rem' }}>
         <button
           className="btn-secondary"
-          onClick={handleRestartClick}
+          onClick={(ev) => {
+            ev.stopPropagation();
+            handleRestartClick();
+          }}
           style={{
             display: 'inline-flex',
             alignItems: 'center',
