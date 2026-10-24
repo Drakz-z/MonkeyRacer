@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { X, Copy, Check, Smartphone, Wifi, ExternalLink } from 'lucide-react';
 import { getRoomShareUrl } from '../utils/socket';
+import QRCode from 'qrcode';
 
 export default function QrCodeModal({ isOpen, onClose, roomId, lanIp, port }) {
   const [copied, setCopied] = useState(false);
@@ -11,21 +12,18 @@ export default function QrCodeModal({ isOpen, onClose, roomId, lanIp, port }) {
 
   const joinUrl = getRoomShareUrl(roomId, selectedHost, port);
 
-  // Fetch or generate QR code
+  // Generate QR code client-side
   useEffect(() => {
     let isMounted = true;
-    const fetchQr = async () => {
-      try {
-        const res = await fetch(`/api/qr?text=${encodeURIComponent(joinUrl)}`);
-        if (res.ok) {
-          const data = await res.json();
-          if (isMounted) setQrSrc(data.qr);
-        }
-      } catch (e) {
-        console.error('Failed to fetch QR:', e);
-      }
-    };
-    fetchQr();
+    QRCode.toDataURL(joinUrl, {
+      margin: 2,
+      width: 240,
+      color: { dark: '#000000', light: '#ffffff' },
+    })
+      .then((url) => {
+        if (isMounted) setQrSrc(url);
+      })
+      .catch((err) => console.error(err));
     return () => { isMounted = false; };
   }, [joinUrl]);
 

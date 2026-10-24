@@ -1,5 +1,5 @@
 export const SOLO_COMMON_WORDS = [
-  'the', 'be', 'of', 'and', 'a', 'to', 'in', 'he', 'have', 'it', 'that', 'for', 'they', 'I', 'with', 'as', 'not',
+  'the', 'be', 'of', 'and', 'a', 'to', 'in', 'he', 'have', 'it', 'that', 'for', 'they', 'with', 'as', 'not',
   'on', 'she', 'at', 'by', 'this', 'we', 'you', 'do', 'but', 'from', 'or', 'which', 'one', 'would', 'all', 'will',
   'there', 'say', 'who', 'make', 'when', 'can', 'more', 'if', 'no', 'man', 'out', 'other', 'so', 'what', 'time',
   'up', 'go', 'about', 'than', 'into', 'could', 'state', 'only', 'new', 'year', 'some', 'take', 'come', 'these',
@@ -40,3 +40,18 @@ export function calculateAccuracy(correctChars, totalTypedChars) {
   if (totalTypedChars <= 0) return 100;
   return Math.max(0, Math.min(100, Math.round((correctChars / totalTypedChars) * 100)));
 }
+
+export const BOT_NAMES = [
+  'SpeedyKong', 'CyberApe', 'ChimpDriver', 'NeonGibbon', 'DriftGorilla',
+  'TurboBaboon', 'KeyMaster', 'TypeNinja', 'VelocityChimp', 'GlitchMonkey',
+  'ApexRacer', 'QuantumApe', 'ThunderKeys', 'BananaRacer', 'SonicMandrill',
+  'ViperTypist', 'RocketOrangutan', 'EchoChimp', 'PulsePrimate', 'ShiftSlammer',
+  'MatrixMonkey', 'ZenRacer', 'BlazeGorilla', 'CosmicApe', 'HyperTypist',
+  'PhantomChimp', 'SilverbackPro', 'PixelPrimate', 'ShadowRacer', 'LaserMonkey'
+];
+
+export const AVATAR_COLORS = [
+  '#e2b714', '#f66e0d', '#bd93f9', '#ff007f', '#88c0d0', '#50fa7b',
+  '#ffb86c', '#ff5555', '#4caf50', '#2196f3', '#9c27b0', '#00bcd4'
+];
+

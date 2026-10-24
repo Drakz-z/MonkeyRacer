@@ -14,6 +14,7 @@ import {
   FileText
 } from 'lucide-react';
 import { getRoomShareUrl } from '../utils/socket';
+import QRCode from 'qrcode';
 
 export default function RoomLobby({
   roomId,
@@ -36,10 +37,13 @@ export default function RoomLobby({
 
   useEffect(() => {
     let isMounted = true;
-    fetch(`/api/qr?text=${encodeURIComponent(joinUrl)}`)
-      .then((r) => r.json())
-      .then((data) => {
-        if (isMounted && data.qr) setQrSrc(data.qr);
+    QRCode.toDataURL(joinUrl, {
+      margin: 2,
+      width: 200,
+      color: { dark: '#000000', light: '#ffffff' },
+    })
+      .then((url) => {
+        if (isMounted) setQrSrc(url);
       })
       .catch((e) => console.error(e));
     return () => { isMounted = false; };
