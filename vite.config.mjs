@@ -6,15 +6,6 @@ export default defineConfig({
   plugins: [react()],
   server: {
     host: true, // Listen on 0.0.0.0 for mobile phone testing
-    port: 5173,
-    proxy: {
-      '/socket.io': {
-        target: 'http://localhost:3001',
-        ws: true,
-      },
-      '/api': {
-        target: 'http://localhost:3001',
-      },
-    },
+    port: 5173
   },
 });

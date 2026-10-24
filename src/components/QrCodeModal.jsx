@@ -1,23 +1,35 @@
 import React, { useState, useEffect } from 'react';
-import { X, Copy, Check, Smartphone, Wifi, ExternalLink } from 'lucide-react';
-import { getRoomShareUrl } from '../utils/socket';
+import { X, Copy, Check, Smartphone, AlertCircle } from 'lucide-react';
+import { getRoomShareUrl, isLocalhostUrl } from '../utils/room';
 import QRCode from 'qrcode';
 
-export default function QrCodeModal({ isOpen, onClose, roomId, lanIp, port }) {
-  const [copied, setCopied] = useState(false);
+export async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    // Clipboard API is unavailable on plain-http LAN addresses; fall back to execCommand
+    const el = document.createElement('textarea');
+    el.value = text;
+    el.style.position = 'fixed';
+    el.style.opacity = '0';
+    document.body.appendChild(el);
+    el.select();
+    const ok = document.execCommand('copy');
+    document.body.removeChild(el);
+    return ok;
+  }
+}
+
+export function useQrCode(text, width = 240) {
   const [qrSrc, setQrSrc] = useState(null);
-  const [selectedHost, setSelectedHost] = useState(lanIp || 'localhost');
-
-  if (!isOpen || !roomId) return null;
-
-  const joinUrl = getRoomShareUrl(roomId, selectedHost, port);
-
-  // Generate QR code client-side
   useEffect(() => {
+    if (!text) return undefined;
     let isMounted = true;
-    QRCode.toDataURL(joinUrl, {
+    QRCode.toDataURL(text, {
       margin: 2,
-      width: 240,
+      width,
+      errorCorrectionLevel: 'M',
       color: { dark: '#000000', light: '#ffffff' },
     })
       .then((url) => {
@@ -25,12 +37,43 @@ export default function QrCodeModal({ isOpen, onClose, roomId, lanIp, port }) {
       })
       .catch((err) => console.error(err));
     return () => { isMounted = false; };
-  }, [joinUrl]);
+  }, [text, width]);
+  return qrSrc;
+}
 
-  const copyToClipboard = () => {
-    navigator.clipboard.writeText(joinUrl);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2500);
+export function LocalhostWarning() {
+  if (!isLocalhostUrl()) return null;
+  return (
+    <div style={{
+      display: 'flex',
+      alignItems: 'flex-start',
+      gap: '0.4rem',
+      color: 'var(--error-color)',
+      fontSize: '0.78rem',
+      marginTop: '0.6rem',
+      textAlign: 'left',
+    }}>
+      <AlertCircle size={14} style={{ flexShrink: 0, marginTop: 2 }} />
+      <span>
+        This link uses <b>localhost</b>, which other devices can't open. Share the room code instead,
+        or open this site via its network address / the live site.
+      </span>
+    </div>
+  );
+}
+
+export default function QrCodeModal({ isOpen, onClose, roomId }) {
+  const [copied, setCopied] = useState(false);
+  const joinUrl = roomId ? getRoomShareUrl(roomId) : '';
+  const qrSrc = useQrCode(isOpen ? joinUrl : '', 240);
+
+  if (!isOpen || !roomId) return null;
+
+  const copyToClipboard = async () => {
+    if (await copyText(joinUrl)) {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2500);
+    }
   };
 
   return (
@@ -47,10 +90,9 @@ export default function QrCodeModal({ isOpen, onClose, roomId, lanIp, port }) {
           </h2>
         </div>
         <p style={{ color: 'var(--sub-color)', fontSize: '0.88rem', marginBottom: '1.25rem' }}>
-          Scan this QR code with your mobile camera to join up to 200 racers!
+          Scan with your phone camera — works on any network, no app needed.
         </p>
 
-        {/* QR Code Container */}
         <div className="qr-container">
           {qrSrc ? (
             <img src={qrSrc} alt="Room QR Code" className="qr-image" />
@@ -63,14 +105,8 @@ export default function QrCodeModal({ isOpen, onClose, roomId, lanIp, port }) {
           <div className="room-code-tag">
             {roomId}
           </div>
-
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', color: 'var(--sub-color)', fontSize: '0.8rem', marginTop: '4px' }}>
-            <Wifi size={14} color="var(--main-color)" />
-            <span>Connect to same Wi-Fi network</span>
-          </div>
         </div>
 
-        {/* Direct Link & Copy */}
         <div style={{
           display: 'flex',
           alignItems: 'center',
@@ -78,15 +114,17 @@ export default function QrCodeModal({ isOpen, onClose, roomId, lanIp, port }) {
           border: '1px solid var(--card-border)',
           borderRadius: '10px',
           padding: '0.5rem 0.75rem',
-          margin: '1rem 0',
+          margin: '1rem 0 0',
           gap: '0.5rem'
         }}>
           <input
             type="text"
             readOnly
             value={joinUrl}
+            onFocus={(e) => e.target.select()}
             style={{
               flex: 1,
+              minWidth: 0,
               background: 'transparent',
               border: 'none',
               color: 'var(--text-color)',
@@ -104,35 +142,7 @@ export default function QrCodeModal({ isOpen, onClose, roomId, lanIp, port }) {
             <span>{copied ? 'Copied!' : 'Copy'}</span>
           </button>
         </div>
-
-        {/* Network host switch if multiple options */}
-        {lanIp && lanIp !== 'localhost' && (
-          <div style={{ display: 'flex', justifyContent: 'center', gap: '0.75rem', fontSize: '0.8rem' }}>
-            <span style={{ color: 'var(--sub-color)' }}>Host IP:</span>
-            <span
-              onClick={() => setSelectedHost(lanIp)}
-              style={{
-                cursor: 'pointer',
-                color: selectedHost === lanIp ? 'var(--main-color)' : 'var(--sub-color)',
-                fontWeight: selectedHost === lanIp ? 'bold' : 'normal',
-                textDecoration: 'underline'
-              }}
-            >
-              LAN ({lanIp})
-            </span>
-            <span
-              onClick={() => setSelectedHost('localhost')}
-              style={{
-                cursor: 'pointer',
-                color: selectedHost === 'localhost' ? 'var(--main-color)' : 'var(--sub-color)',
-                fontWeight: selectedHost === 'localhost' ? 'bold' : 'normal',
-                textDecoration: 'underline'
-              }}
-            >
-              Localhost
-            </span>
-          </div>
-        )}
+        <LocalhostWarning />
       </div>
     </div>
   );

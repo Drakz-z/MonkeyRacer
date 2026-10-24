@@ -2,12 +2,13 @@ import React, { useState, useEffect } from 'react';
 import TypingArea from './TypingArea';
 import ResultsPodium from './ResultsPodium';
 import { getRandomWords } from '../utils/words';
-import { Clock, FileText, RotateCcw } from 'lucide-react';
+import { loadSettings, saveSettings } from '../utils/cookies';
+import { Clock, FileText } from 'lucide-react';
 
 export default function SoloMode() {
-  const [config, setConfig] = useState({
-    mode: 'time', // 'words' | 'time'
-    amount: 120, // default 2 minutes (120s) as requested!
+  const [config, setConfig] = useState(() => {
+    const saved = loadSettings();
+    return { mode: saved.soloMode, amount: saved.soloAmount }; // 'words' | 'time'
   });
 
   const [text, setText] = useState('');
@@ -17,6 +18,7 @@ export default function SoloMode() {
   // Generate words on config change or restart
   useEffect(() => {
     generateNewTest();
+    saveSettings({ soloMode: config.mode, soloAmount: config.amount });
   }, [config]);
 
   const generateNewTest = () => {

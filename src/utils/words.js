@@ -24,6 +24,47 @@ export function getRandomWords(count = 25) {
   return result.join(' ');
 }
 
+export const CODE_WORDS = [
+  'const', 'function', 'return', 'async', 'await', 'import', 'export', 'default', 'class', 'extends', 'super',
+  'constructor', 'this', 'let', 'var', 'if', 'else', 'switch', 'case', 'break', 'try', 'catch', 'finally',
+  'throw', 'new', 'typeof', 'void', 'delete', 'null', 'undefined', 'true', 'false', 'map',
+  'filter', 'reduce', 'forEach', 'find', 'push', 'pop', 'shift', 'unshift', 'slice', 'splice',
+  'length', 'keys', 'values', 'entries', 'promise', 'resolve', 'reject', 'then', 'response', 'request',
+  'socket', 'emit', 'listen', 'connect', 'status', 'payload', 'buffer', 'stream', 'pipe'
+];
+
+export const QUOTES = [
+  'The quick brown fox jumps over the lazy dog and never looks back at the past.',
+  'Simplicity is the soul of efficiency, especially when typing with pure momentum.',
+  'Any fool can write code that a computer can understand. Good programmers write code that humans can understand.',
+  'To be yourself in a world that is constantly trying to make you something else is the greatest accomplishment.',
+  'Speed is great, but accuracy is the foundation of genuine typing mastery and effortless velocity.',
+  'Do not go where the path may lead, go instead where there is no path and leave a trail.'
+];
+
+// Generate test text for a vocabulary type ('standard' | 'code' | 'quote')
+export function generateText(type = 'standard', count = 25) {
+  if (type === 'quote') {
+    // Chain shuffled quotes until there are enough words for the test
+    const parts = [];
+    let words = 0;
+    while (words < count) {
+      const quote = QUOTES[Math.floor(Math.random() * QUOTES.length)];
+      parts.push(quote);
+      words += quote.split(' ').length;
+    }
+    return parts.join(' ');
+  }
+  if (type === 'code') {
+    const result = [];
+    for (let i = 0; i < count; i++) {
+      result.push(CODE_WORDS[Math.floor(Math.random() * CODE_WORDS.length)]);
+    }
+    return result.join(' ');
+  }
+  return getRandomWords(count);
+}
+
 export function calculateWpm(correctChars, elapsedSeconds) {
   if (elapsedSeconds <= 0) return 0;
   const minutes = elapsedSeconds / 60;

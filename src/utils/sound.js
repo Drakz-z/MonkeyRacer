@@ -151,6 +151,34 @@ class SoundEngine {
     });
   }
 
+  playTone(freq, duration = 0.18, gainAmount = 0.25) {
+    if (this.soundType === 'off' || this.volume <= 0) return;
+    this.init();
+    if (!this.ctx) return;
+
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    const time = this.ctx.currentTime;
+
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(freq, time);
+    gain.gain.setValueAtTime(gainAmount * this.volume, time);
+    gain.gain.exponentialRampToValueAtTime(0.001, time + duration);
+
+    osc.connect(gain);
+    gain.connect(this.ctx.destination);
+    osc.start(time);
+    osc.stop(time + duration);
+  }
+
+  playCountdownSound() {
+    this.playTone(523.25, 0.15);
+  }
+
+  playStartSound() {
+    this.playTone(1046.5, 0.35, 0.3);
+  }
+
   setSoundType(type) {
     this.soundType = type;
   }

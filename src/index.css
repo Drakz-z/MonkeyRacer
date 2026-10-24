@@ -959,3 +959,12 @@ body {
 .footer-link:hover {
   color: var(--text-color);
 }
+
+/* Loading spinner for room create/join buttons */
+.spin {
+  animation: spinIcon 0.9s linear infinite;
+}
+
+@keyframes spinIcon {
+  to { transform: rotate(360deg); }
+}

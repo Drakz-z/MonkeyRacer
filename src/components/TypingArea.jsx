@@ -11,6 +11,7 @@ export default function TypingArea({
   onProgressUpdate,
   onFinish,
   onRestart,
+  onStart,
   disabled = false,
 }) {
   const words = React.useMemo(() => (text ? text.trim().split(/\s+/) : []), [text]);
@@ -41,6 +42,7 @@ export default function TypingArea({
   const wordsContainerRef = useRef(null);
   const wordsWrapperRef = useRef(null);
   const timerIntervalRef = useRef(null);
+  const finishedRef = useRef(false);
 
   // Initialize state when text or timeLimit changes
   useEffect(() => {
@@ -63,6 +65,7 @@ export default function TypingArea({
     correctKeystrokesRef.current = 0;
     mistakesRef.current = 0;
     timelineRef.current = [];
+    finishedRef.current = false;
 
     if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
     if (inputRef.current) {
@@ -70,6 +73,13 @@ export default function TypingArea({
       inputRef.current.focus();
     }
   };
+
+  // Focus the input as soon as typing becomes possible (e.g. when a race countdown ends)
+  useEffect(() => {
+    if (raceStarted && !disabled && inputRef.current) {
+      inputRef.current.focus();
+    }
+  }, [raceStarted, disabled]);
 
   // Timer loop
   useEffect(() => {
@@ -259,7 +269,10 @@ export default function TypingArea({
       if (!currentVal || currentVal.length === 0) return;
 
       // Start timer on first word submission if not started
-      if (!startTime) setStartTime(Date.now());
+      if (!startTime) {
+        setStartTime(Date.now());
+        if (onStart) onStart();
+      }
 
       soundEngine.playKeySound(true);
 
@@ -317,6 +330,7 @@ export default function TypingArea({
 
     if (!startTime) {
       setStartTime(Date.now());
+      if (onStart) onStart();
     }
 
     let val = e.target.value;
@@ -391,8 +405,15 @@ export default function TypingArea({
   };
 
   const finishTypingTest = () => {
+    if (finishedRef.current) return;
+    finishedRef.current = true;
     soundEngine.playFinishSound();
-    const finalSeconds = startTime ? Math.max(1, (Date.now() - startTime) / 1000) : 1;
+    // A timed test that ran out the clock lasted exactly the time limit; measure against it
+    // directly instead of the (coarse) interval timestamp
+    const measuredSeconds = startTime ? Math.max(1, (Date.now() - startTime) / 1000) : 1;
+    const finalSeconds = mode === 'time' && timeLimit && measuredSeconds >= timeLimit - 1
+      ? timeLimit
+      : measuredSeconds;
     if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
 
     const totalChars = totalKeystrokesRef.current;

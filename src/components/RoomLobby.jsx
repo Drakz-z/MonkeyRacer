@@ -1,29 +1,55 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import {
   QrCode,
   Copy,
   Check,
   Play,
   Users,
-  Bot,
   Settings,
   Sparkles,
   Smartphone,
   Trash2,
-  Clock,
-  FileText
+  WifiOff,
 } from 'lucide-react';
-import { getRoomShareUrl } from '../utils/socket';
-import QRCode from 'qrcode';
+import { getRoomShareUrl, SESSION_MINUTE_OPTIONS, TEST_SECOND_OPTIONS } from '../utils/room';
+import { copyText, useQrCode, LocalhostWarning } from './QrCodeModal';
+
+function OptionButton({ active, disabled, onClick, children }) {
+  return (
+    <button
+      disabled={disabled}
+      onClick={onClick}
+      style={{
+        flex: 1,
+        minWidth: '55px',
+        padding: '0.45rem 0.5rem',
+        borderRadius: '8px',
+        border: '1px solid',
+        borderColor: active ? 'var(--main-color)' : 'var(--card-border)',
+        background: active ? 'rgba(226, 183, 20, 0.15)' : 'rgba(0,0,0,0.2)',
+        color: active ? 'var(--main-color)' : 'var(--text-color)',
+        fontWeight: 600,
+        cursor: disabled ? 'default' : 'pointer',
+        opacity: disabled && !active ? 0.6 : 1,
+        fontSize: '0.85rem',
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
+function formatTestSeconds(s) {
+  return s >= 60 ? `${s / 60}m` : `${s}s`;
+}
 
 export default function RoomLobby({
   roomId,
   isHost,
   config,
+  offline,
   participants = [],
   selfId,
-  lanIp,
-  port,
   onStartRace,
   onUpdateConfig,
   onAddBots,
@@ -31,35 +57,43 @@ export default function RoomLobby({
   onOpenQr,
 }) {
   const [copied, setCopied] = useState(false);
-  const [qrSrc, setQrSrc] = useState(null);
+  const joinUrl = getRoomShareUrl(roomId);
+  const qrSrc = useQrCode(offline ? '' : joinUrl, 200);
 
-  const joinUrl = getRoomShareUrl(roomId, lanIp, port);
-
-  useEffect(() => {
-    let isMounted = true;
-    QRCode.toDataURL(joinUrl, {
-      margin: 2,
-      width: 200,
-      color: { dark: '#000000', light: '#ffffff' },
-    })
-      .then((url) => {
-        if (isMounted) setQrSrc(url);
-      })
-      .catch((e) => console.error(e));
-    return () => { isMounted = false; };
-  }, [joinUrl]);
-
-  const copyLink = () => {
-    navigator.clipboard.writeText(joinUrl);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+  const copyLink = async () => {
+    if (await copyText(joinUrl)) {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
   };
 
   const currentCount = participants.length;
+  const maxTests = Math.floor((config.sessionMinutes * 60) / config.testSeconds);
 
   return (
     <div style={{ width: '100%', maxWidth: '1050px', margin: '0 auto' }}>
-      {/* Top Banner: Room PIN & Quick Actions */}
+      {offline && (
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: '0.6rem',
+          background: 'rgba(202, 71, 84, 0.12)',
+          border: '1px solid var(--error-color)',
+          color: 'var(--text-color)',
+          borderRadius: '12px',
+          padding: '0.75rem 1rem',
+          marginBottom: '1rem',
+          fontSize: '0.88rem',
+        }}>
+          <WifiOff size={18} color="var(--error-color)" />
+          <span>
+            Offline room — the matchmaking server couldn't be reached, so other people can't join.
+            You can still race against bots. Leave and create a new room to retry online.
+          </span>
+        </div>
+      )}
+
+      {/* Top Banner: Room code & start */}
       <div style={{
         background: 'var(--sub-alt-color)',
         border: '1px solid var(--card-border)',
@@ -74,9 +108,9 @@ export default function RoomLobby({
       }}>
         <div>
           <div style={{ fontSize: '0.8rem', color: 'var(--sub-color)', textTransform: 'uppercase', fontWeight: 600 }}>
-            Room Lobby Code
+            Room Code
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginTop: '4px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginTop: '4px', flexWrap: 'wrap' }}>
             <span style={{
               fontFamily: 'var(--font-mono)',
               fontSize: '2rem',
@@ -86,28 +120,22 @@ export default function RoomLobby({
             }}>
               {roomId}
             </span>
-            <button
-              onClick={copyLink}
-              className="btn-secondary"
-              style={{ padding: '0.45rem 0.9rem', fontSize: '0.85rem' }}
-            >
-              {copied ? <Check size={16} /> : <Copy size={16} />}
-              <span>{copied ? 'Copied' : 'Copy Link'}</span>
-            </button>
-            <button
-              onClick={onOpenQr}
-              className="btn-secondary"
-              style={{ padding: '0.45rem 0.9rem', fontSize: '0.85rem' }}
-              title="Show Phone QR"
-            >
-              <QrCode size={16} color="var(--main-color)" />
-              <span>Phone QR</span>
-            </button>
+            {!offline && (
+              <>
+                <button onClick={copyLink} className="btn-secondary" style={{ padding: '0.45rem 0.9rem', fontSize: '0.85rem' }}>
+                  {copied ? <Check size={16} /> : <Copy size={16} />}
+                  <span>{copied ? 'Copied' : 'Copy Link'}</span>
+                </button>
+                <button onClick={onOpenQr} className="btn-secondary" style={{ padding: '0.45rem 0.9rem', fontSize: '0.85rem' }} title="Show Phone QR">
+                  <QrCode size={16} color="var(--main-color)" />
+                  <span>Phone QR</span>
+                </button>
+              </>
+            )}
           </div>
         </div>
 
-        {/* Start Button & Capacity */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
           <div style={{
             background: 'rgba(255,255,255,0.05)',
             border: '1px solid var(--card-border)',
@@ -122,11 +150,7 @@ export default function RoomLobby({
           </div>
 
           {isHost ? (
-            <button
-              className="btn-primary"
-              onClick={onStartRace}
-              style={{ padding: '0.85rem 2rem', fontSize: '1.1rem' }}
-            >
+            <button className="btn-primary" onClick={onStartRace} style={{ padding: '0.85rem 2rem', fontSize: '1.1rem' }}>
               <Play size={20} fill="currentColor" />
               <span>START RACE</span>
             </button>
@@ -140,56 +164,52 @@ export default function RoomLobby({
               fontWeight: 600,
               fontSize: '0.9rem'
             }}>
-              Waiting for host to start race...
+              Waiting for host to start the race...
             </div>
           )}
         </div>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '1.5rem', marginBottom: '1.5rem' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '1.5rem', marginBottom: '1.5rem' }}>
         {/* QR Code Quick Join Card */}
-        <div style={{
-          background: 'var(--sub-alt-color)',
-          border: '1px solid var(--card-border)',
-          borderRadius: '16px',
-          padding: '1.5rem',
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          textAlign: 'center'
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem', fontWeight: 700, fontSize: '1rem' }}>
-            <Smartphone size={18} color="var(--main-color)" />
-            <span>Scan with Phone Camera</span>
-          </div>
-          <p style={{ fontSize: '0.8rem', color: 'var(--sub-color)', marginBottom: '1rem' }}>
-            Racers can scan and join immediately from mobile browsers
-          </p>
-
-          {qrSrc ? (
-            <img
-              src={qrSrc}
-              alt="Join QR"
-              style={{
-                width: 170,
-                height: 170,
-                borderRadius: '12px',
-                padding: '6px',
-                background: '#1e2022',
-                boxShadow: '0 6px 20px rgba(0,0,0,0.3)',
-              }}
-            />
-          ) : (
-            <div style={{ width: 170, height: 170, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--sub-color)' }}>
-              Loading QR...
+        {!offline && (
+          <div style={{
+            background: 'var(--sub-alt-color)',
+            border: '1px solid var(--card-border)',
+            borderRadius: '16px',
+            padding: '1.5rem',
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            textAlign: 'center'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem', fontWeight: 700, fontSize: '1rem' }}>
+              <Smartphone size={18} color="var(--main-color)" />
+              <span>Scan with Phone Camera</span>
             </div>
-          )}
-          <div style={{ fontSize: '0.75rem', color: 'var(--sub-color)', marginTop: '0.75rem', fontFamily: 'var(--font-mono)' }}>
-            {joinUrl}
-          </div>
-        </div>
+            <p style={{ fontSize: '0.8rem', color: 'var(--sub-color)', marginBottom: '1rem' }}>
+              Or open the site and enter code <b style={{ color: 'var(--main-color)' }}>{roomId}</b>
+            </p>
 
-        {/* Host Controls & Bot Spawner */}
+            {qrSrc ? (
+              <img
+                src={qrSrc}
+                alt="Join QR"
+                style={{ width: 170, height: 170, borderRadius: '12px', background: '#fff', boxShadow: '0 6px 20px rgba(0,0,0,0.3)' }}
+              />
+            ) : (
+              <div style={{ width: 170, height: 170, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--sub-color)' }}>
+                Loading QR...
+              </div>
+            )}
+            <div style={{ fontSize: '0.72rem', color: 'var(--sub-color)', marginTop: '0.75rem', fontFamily: 'var(--font-mono)', wordBreak: 'break-all' }}>
+              {joinUrl}
+            </div>
+            <LocalhostWarning />
+          </div>
+        )}
+
+        {/* Race settings */}
         <div style={{
           background: 'var(--sub-alt-color)',
           border: '1px solid var(--card-border)',
@@ -201,109 +221,48 @@ export default function RoomLobby({
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 700, fontSize: '1rem' }}>
             <Settings size={18} color="var(--main-color)" />
-            <span>Race Settings {isHost ? '(Host)' : '(Locked)'}</span>
+            <span>Race Settings {isHost ? '(Host)' : '(Set by host)'}</span>
           </div>
 
-          {/* Mode Switcher: Words or Time */}
-          <div>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.4rem' }}>
-              <span style={{ fontSize: '0.8rem', color: 'var(--sub-color)' }}>Race Mode</span>
-              <div style={{ display: 'flex', gap: '0.35rem' }}>
-                <button
-                  disabled={!isHost}
-                  onClick={() => onUpdateConfig({ mode: 'time', amount: 120 })}
-                  style={{
-                    background: config.mode === 'time' ? 'var(--main-color)' : 'rgba(0,0,0,0.2)',
-                    color: config.mode === 'time' ? '#111' : 'var(--text-color)',
-                    border: 'none',
-                    padding: '2px 8px',
-                    borderRadius: '4px',
-                    fontSize: '0.75rem',
-                    fontWeight: 700,
-                    cursor: isHost ? 'pointer' : 'default',
-                  }}
-                >
-                  Time
-                </button>
-                <button
-                  disabled={!isHost}
-                  onClick={() => onUpdateConfig({ mode: 'words', amount: 25 })}
-                  style={{
-                    background: config.mode === 'words' ? 'var(--main-color)' : 'rgba(0,0,0,0.2)',
-                    color: config.mode === 'words' ? '#111' : 'var(--text-color)',
-                    border: 'none',
-                    padding: '2px 8px',
-                    borderRadius: '4px',
-                    fontSize: '0.75rem',
-                    fontWeight: 700,
-                    cursor: isHost ? 'pointer' : 'default',
-                  }}
-                >
-                  Words
-                </button>
-              </div>
-            </div>
-
-            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-              {config.mode === 'time' ? (
-                [
-                  { val: 15, label: '15s' },
-                  { val: 30, label: '30s' },
-                  { val: 60, label: '60s (1m)' },
-                  { val: 120, label: '120s (2m)' },
-                ].map(({ val, label }) => (
-                  <button
-                    key={val}
-                    disabled={!isHost}
-                    onClick={() => onUpdateConfig({ mode: 'time', amount: val })}
-                    style={{
-                      flex: 1,
-                      minWidth: '55px',
-                      padding: '0.45rem 0.5rem',
-                      borderRadius: '8px',
-                      border: '1px solid',
-                      borderColor: config.mode === 'time' && config.amount === val ? 'var(--main-color)' : 'var(--card-border)',
-                      background: config.mode === 'time' && config.amount === val ? 'rgba(226, 183, 20, 0.15)' : 'rgba(0,0,0,0.2)',
-                      color: config.mode === 'time' && config.amount === val ? 'var(--main-color)' : 'var(--text-color)',
-                      fontWeight: 600,
-                      cursor: isHost ? 'pointer' : 'default',
-                      fontSize: '0.85rem',
-                    }}
-                  >
-                    {label}
-                  </button>
-                ))
-              ) : (
-                [10, 25, 50, 100].map((num) => (
-                  <button
-                    key={num}
-                    disabled={!isHost}
-                    onClick={() => onUpdateConfig({ mode: 'words', amount: num })}
-                    style={{
-                      flex: 1,
-                      minWidth: '50px',
-                      padding: '0.45rem 0.6rem',
-                      borderRadius: '8px',
-                      border: '1px solid',
-                      borderColor: config.mode === 'words' && config.amount === num ? 'var(--main-color)' : 'var(--card-border)',
-                      background: config.mode === 'words' && config.amount === num ? 'rgba(226, 183, 20, 0.15)' : 'rgba(0,0,0,0.2)',
-                      color: config.mode === 'words' && config.amount === num ? 'var(--main-color)' : 'var(--text-color)',
-                      fontWeight: 600,
-                      cursor: isHost ? 'pointer' : 'default',
-                      fontSize: '0.85rem',
-                    }}
-                  >
-                    {num}w
-                  </button>
-                ))
-              )}
-            </div>
-          </div>
-
-          {/* Word Type */}
           <div>
             <div style={{ fontSize: '0.8rem', color: 'var(--sub-color)', marginBottom: '0.4rem' }}>
-              Dictionary Vocabulary
+              Room duration — how long the race session lasts
+            </div>
+            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+              {SESSION_MINUTE_OPTIONS.map((m) => (
+                <OptionButton
+                  key={m}
+                  active={config.sessionMinutes === m}
+                  disabled={!isHost}
+                  onClick={() => onUpdateConfig({ sessionMinutes: m })}
+                >
+                  {m} min
+                </OptionButton>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <div style={{ fontSize: '0.8rem', color: 'var(--sub-color)', marginBottom: '0.4rem' }}>
+              Test length — each test must be completed in full to count
+            </div>
+            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+              {TEST_SECOND_OPTIONS.map((s) => (
+                <OptionButton
+                  key={s}
+                  active={config.testSeconds === s}
+                  disabled={!isHost || s > config.sessionMinutes * 60}
+                  onClick={() => onUpdateConfig({ testSeconds: s })}
+                >
+                  {formatTestSeconds(s)}
+                </OptionButton>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <div style={{ fontSize: '0.8rem', color: 'var(--sub-color)', marginBottom: '0.4rem' }}>
+              Vocabulary
             </div>
             <div style={{ display: 'flex', gap: '0.5rem' }}>
               {[
@@ -311,30 +270,24 @@ export default function RoomLobby({
                 { id: 'code', label: 'Code JS' },
                 { id: 'quote', label: 'Quotes' },
               ].map((item) => (
-                <button
+                <OptionButton
                   key={item.id}
+                  active={config.type === item.id}
                   disabled={!isHost}
                   onClick={() => onUpdateConfig({ type: item.id })}
-                  style={{
-                    flex: 1,
-                    padding: '0.45rem 0.6rem',
-                    borderRadius: '8px',
-                    border: '1px solid',
-                    borderColor: config.type === item.id ? 'var(--main-color)' : 'var(--card-border)',
-                    background: config.type === item.id ? 'rgba(226, 183, 20, 0.15)' : 'rgba(0,0,0,0.2)',
-                    color: config.type === item.id ? 'var(--main-color)' : 'var(--text-color)',
-                    fontWeight: 600,
-                    cursor: isHost ? 'pointer' : 'default',
-                    fontSize: '0.85rem',
-                  }}
                 >
                   {item.label}
-                </button>
+                </OptionButton>
               ))}
             </div>
           </div>
 
-          {/* Test 200 Racers - Bot Spawner */}
+          <div style={{ fontSize: '0.8rem', color: 'var(--sub-color)', lineHeight: 1.5 }}>
+            For <b style={{ color: 'var(--text-color)' }}>{config.sessionMinutes} min</b>, racers take as many{' '}
+            <b style={{ color: 'var(--text-color)' }}>{formatTestSeconds(config.testSeconds)}</b> tests as they can (up to {maxTests}).
+            Your best WPM ranks you on the leaderboard.
+          </div>
+
           {isHost && (
             <div style={{
               background: 'rgba(0,0,0,0.2)',
@@ -344,7 +297,7 @@ export default function RoomLobby({
             }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
                 <span style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-color)', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                  <Sparkles size={14} color="var(--main-color)" /> Simulate 200 Racers
+                  <Sparkles size={14} color="var(--main-color)" /> Practice Bots
                 </span>
                 {participants.some((p) => p.isBot) && (
                   <button
@@ -365,30 +318,17 @@ export default function RoomLobby({
                 )}
               </div>
               <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
-                <button
-                  className="btn-secondary"
-                  style={{ flex: 1, padding: '0.35rem 0.5rem', fontSize: '0.78rem' }}
-                  onClick={() => onAddBots(5)}
-                  disabled={currentCount >= 200}
-                >
-                  +5 Bots
-                </button>
-                <button
-                  className="btn-secondary"
-                  style={{ flex: 1, padding: '0.35rem 0.5rem', fontSize: '0.78rem' }}
-                  onClick={() => onAddBots(20)}
-                  disabled={currentCount >= 200}
-                >
-                  +20 Bots
-                </button>
-                <button
-                  className="btn-secondary"
-                  style={{ flex: 1, padding: '0.35rem 0.5rem', fontSize: '0.78rem' }}
-                  onClick={() => onAddBots(50)}
-                  disabled={currentCount >= 200}
-                >
-                  +50 Bots
-                </button>
+                {[1, 5, 20].map((n) => (
+                  <button
+                    key={n}
+                    className="btn-secondary"
+                    style={{ flex: 1, padding: '0.35rem 0.5rem', fontSize: '0.78rem' }}
+                    onClick={() => onAddBots(n)}
+                    disabled={currentCount >= 200}
+                  >
+                    +{n} Bot{n > 1 ? 's' : ''}
+                  </button>
+                ))}
                 <button
                   className="btn-primary"
                   style={{ flex: '1 1 100%', padding: '0.45rem', fontSize: '0.82rem', marginTop: '4px' }}
@@ -403,14 +343,14 @@ export default function RoomLobby({
         </div>
       </div>
 
-      {/* Roster of Connected Racers */}
+      {/* Roster */}
       <div style={{
         background: 'var(--sub-alt-color)',
         border: '1px solid var(--card-border)',
         borderRadius: '16px',
         padding: '1.5rem',
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem', flexWrap: 'wrap', gap: '0.5rem' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 700, fontSize: '1.05rem' }}>
             <Users size={18} color="var(--main-color)" />
             <span>Racers in Lobby ({participants.length})</span>
@@ -464,6 +404,7 @@ export default function RoomLobby({
                   </span>
                   {isSelf && <span style={{ fontSize: '0.7rem', color: 'var(--main-color)' }}> (You)</span>}
                   {p.isHost && <span style={{ fontSize: '0.65rem', color: 'var(--sub-color)', marginLeft: 4 }}>👑</span>}
+                  {p.isBot && <span style={{ fontSize: '0.65rem', color: 'var(--sub-color)', marginLeft: 4 }}>🤖</span>}
                 </div>
               </div>
             );
