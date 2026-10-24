@@ -7,6 +7,7 @@ import SessionResults from './components/SessionResults';
 import ThemeSelector from './components/ThemeSelector';
 import SoundSelector from './components/SoundSelector';
 import QrCodeModal from './components/QrCodeModal';
+import InviteJoin from './components/InviteJoin';
 import { RoomHost, RoomClient, normalizeRoomCode } from './utils/room';
 import { applyTheme } from './utils/themes';
 import { soundEngine } from './utils/sound';
@@ -50,8 +51,8 @@ export default function App() {
   );
   // Code from a shared link / QR (?room=RACE-ABCD): prefilled so the visitor can pick a name first
   const inviteCode = normalizeRoomCode(initialRoomParam.current);
+  const [inviteMode, setInviteMode] = useState(!!inviteCode);
   const [joinRoomCode, setJoinRoomCode] = useState(inviteCode);
-  const nameInputRef = useRef(null);
   const [busy, setBusy] = useState(null); // null | 'creating' | 'joining'
   const [joinError, setJoinError] = useState(null);
   const [toastMessage, setToastMessage] = useState(null);
@@ -137,6 +138,8 @@ export default function App() {
       if (roomRef.current !== client) return;
       setAppMode('race');
       setRoomParam(code);
+      // After this room ends, show the normal landing page rather than the invite again
+      setInviteMode(false);
       showToast(`Joined room ${code}!`);
     } catch (err) {
       if (roomRef.current !== client) return; // superseded or cancelled attempt
@@ -155,10 +158,6 @@ export default function App() {
   };
 
   useEffect(() => {
-    if (inviteCode) {
-      nameInputRef.current?.focus();
-      nameInputRef.current?.select();
-    }
     const onUnload = () => roomRef.current?.destroy();
     window.addEventListener('beforeunload', onUnload);
     return () => {
@@ -230,6 +229,28 @@ export default function App() {
   const connectionStatus = !room ? 'none' : room.offline ? 'offline' : 'online';
 
   const renderRace = () => {
+    if (!room && inviteMode) {
+      return (
+        <InviteJoin
+          roomCode={inviteCode}
+          username={username}
+          onUsernameChange={(name) => {
+            setUsername(name);
+            setJoinError(null);
+          }}
+          onJoin={() => joinRoom(inviteCode, rememberUsername())}
+          onDismiss={() => {
+            setInviteMode(false);
+            setJoinRoomCode('');
+            setJoinError(null);
+            clearRoomParam();
+          }}
+          busy={busy === 'joining'}
+          error={joinError}
+        />
+      );
+    }
+
     if (!room) {
       return (
         <div style={{ maxWidth: '600px', margin: '2rem auto', width: '100%' }}>
@@ -250,37 +271,14 @@ export default function App() {
               </p>
             </div>
 
-            {inviteCode && joinRoomCode === inviteCode && (
-              <div style={{
-                background: 'rgba(226, 183, 20, 0.12)',
-                border: '1px solid var(--main-color)',
-                borderRadius: '12px',
-                padding: '0.85rem 1rem',
-                marginBottom: '1.5rem',
-                textAlign: 'center',
-                color: 'var(--text-color)',
-                fontSize: '0.92rem',
-              }}>
-                You've been invited to room{' '}
-                <b style={{ color: 'var(--main-color)', fontFamily: 'var(--font-mono)' }}>{inviteCode}</b>
-                <div style={{ color: 'var(--sub-color)', fontSize: '0.82rem', marginTop: '0.25rem' }}>
-                  Choose your nickname, then press Join.
-                </div>
-              </div>
-            )}
-
             <div style={{ marginBottom: '1.75rem' }}>
               <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 600, color: 'var(--sub-color)', marginBottom: '0.5rem', textTransform: 'uppercase' }}>
                 Your Racer Nickname
               </label>
               <input
-                ref={nameInputRef}
                 type="text"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && joinRoomCode.trim()) handleJoinRoom(e);
-                }}
                 onBlur={rememberUsername}
                 placeholder="Enter racer name..."
                 maxLength={18}
