@@ -148,47 +148,82 @@ export default function TypingArea({
     const wordEl = wordsContainerRef.current.querySelector(`[data-word-index="${currentWordIndex}"]`);
     if (!wordEl) return;
 
-    const currentTyped = currentInputVal;
+    const containerRect = wordsContainerRef.current.getBoundingClientRect();
     const charElements = wordEl.querySelectorAll('.char');
+    const currentTyped = currentInputVal || '';
 
     let targetLeft = 0;
-    let targetTop = wordEl.offsetTop;
+    let targetTop = 0;
     let targetHeight = 28;
 
     if (currentTyped.length === 0) {
-      targetLeft = wordEl.offsetLeft;
-      if (charElements[0]) {
-        targetTop = charElements[0].offsetTop;
-        targetHeight = charElements[0].offsetHeight || 28;
-      }
-    } else if (currentTyped.length <= charElements.length) {
-      const charEl = charElements[currentTyped.length - 1];
-      if (charEl) {
-        targetLeft = charEl.offsetLeft + charEl.offsetWidth;
-        targetTop = charEl.offsetTop;
-        targetHeight = charEl.offsetHeight || 28;
+      // Position caret at the beginning of the active word
+      if (charElements.length > 0) {
+        const firstCharRect = charElements[0].getBoundingClientRect();
+        targetLeft = firstCharRect.left - containerRect.left;
+        targetTop = firstCharRect.top - containerRect.top;
+        targetHeight = firstCharRect.height || 28;
+      } else {
+        const wordRect = wordEl.getBoundingClientRect();
+        targetLeft = wordRect.left - containerRect.left;
+        targetTop = wordRect.top - containerRect.top;
+        targetHeight = wordRect.height || 28;
       }
     } else {
-      const lastCharEl = charElements[charElements.length - 1];
-      if (lastCharEl) {
-        targetLeft = lastCharEl.offsetLeft + lastCharEl.offsetWidth;
-        targetTop = lastCharEl.offsetTop;
-        targetHeight = lastCharEl.offsetHeight || 28;
+      // Position caret immediately after the last typed character in the active word
+      const charIdx = currentTyped.length - 1;
+      if (charIdx < charElements.length) {
+        const charRect = charElements[charIdx].getBoundingClientRect();
+        targetLeft = charRect.right - containerRect.left;
+        targetTop = charRect.top - containerRect.top;
+        targetHeight = charRect.height || 28;
+      } else {
+        // Extra characters typed past target word length
+        const lastChar = charElements[charElements.length - 1];
+        if (lastChar) {
+          const lastCharRect = lastChar.getBoundingClientRect();
+          targetLeft = lastCharRect.right - containerRect.left;
+          targetTop = lastCharRect.top - containerRect.top;
+          targetHeight = lastCharRect.height || 28;
+        } else {
+          const wordRect = wordEl.getBoundingClientRect();
+          targetLeft = wordRect.right - containerRect.left;
+          targetTop = wordRect.top - containerRect.top;
+          targetHeight = wordRect.height || 28;
+        }
       }
     }
 
     setCaretPos({
-      left: targetLeft,
-      top: targetTop,
-      height: targetHeight,
+      left: Math.round(targetLeft),
+      top: Math.round(targetTop),
+      height: Math.round(targetHeight),
     });
 
-    // 3-line rolling scroll
-    if (wordsWrapperRef.current) {
-      const lineHeight = 36;
-      const lineIndex = Math.floor(targetTop / lineHeight);
-      if (lineIndex > 1) {
-        setContainerOffset((lineIndex - 1) * lineHeight);
+    // Dynamic 3-line rolling scroll: keep the active line on line 2 (middle)
+    if (wordsWrapperRef.current && wordsContainerRef.current) {
+      const firstWord = wordsContainerRef.current.querySelector('[data-word-index="0"]');
+      const baseTop = firstWord ? firstWord.offsetTop : 0;
+      const currentWordTop = wordEl.offsetTop;
+
+      // Group words by distinct vertical line offsets
+      const lineTops = [];
+      const allWordEls = wordsContainerRef.current.querySelectorAll('.word');
+      for (let i = 0; i <= currentWordIndex; i++) {
+        const el = allWordEls[i];
+        if (el) {
+          const top = el.offsetTop;
+          if (!lineTops.includes(top)) {
+            lineTops.push(top);
+          }
+        }
+      }
+
+      const currentLineIdx = lineTops.indexOf(currentWordTop);
+      if (currentLineIdx >= 2) {
+        // Show line above as top line, active line as middle line
+        const scrollTargetTop = lineTops[currentLineIdx - 1];
+        setContainerOffset(scrollTargetTop - baseTop);
       } else {
         setContainerOffset(0);
       }
@@ -197,7 +232,12 @@ export default function TypingArea({
 
   useEffect(() => {
     updateCaretPosition();
-  }, [currentWordIndex, currentInputVal, updateCaretPosition]);
+    window.addEventListener('resize', updateCaretPosition);
+    document.fonts?.ready?.then(updateCaretPosition);
+    return () => {
+      window.removeEventListener('resize', updateCaretPosition);
+    };
+  }, [updateCaretPosition]);
 
   // Handle Control Keys: Tab, Space, Backspace
   const handleKeyDown = (e) => {
@@ -343,9 +383,6 @@ export default function TypingArea({
     }
 
     setCurrentInputVal(val);
-    const newTypedWords = [...typedWords];
-    newTypedWords[currentWordIndex] = val;
-    setTypedWords(newTypedWords);
 
     // If last word typed completely and matches
     if (currentWordIndex === words.length - 1 && val === words[currentWordIndex]) {
@@ -406,6 +443,10 @@ export default function TypingArea({
   const focusInput = () => {
     if (inputRef.current) {
       inputRef.current.focus();
+      const len = inputRef.current.value ? inputRef.current.value.length : 0;
+      try {
+        inputRef.current.setSelectionRange(len, len);
+      } catch (err) {}
       setIsFocused(true);
     }
   };
